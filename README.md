@@ -41,6 +41,8 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `PAYMENT_GATEWAY` — nama payment gateway (contoh: `gopay`).
 - `GOBIZ_EMAIL` — email akun GoBiz (jika digunakan).
 - `GOBIZ_PASSWORD` — password akun GoBiz (jika digunakan).
+- `MONGODB_URI` — URI MongoDB untuk penyimpanan data persisten (opsional).
+- `MONGODB_DB` — nama database MongoDB (opsional, default: `auto_order_telegram`).
 
 ## Menjalankan secara lokal
 

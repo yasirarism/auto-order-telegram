@@ -29,6 +29,7 @@ const FormData = require("form-data");
 const Transactions = require("./lib/transactions");
 const txHandler = new Transactions();
 const Database = require("./lib/database");
+const { initMongoSync } = require("./lib/mongo-sync");
 const tx = new Database("data/transactions.json");
 const logger = require("./utils/logger");
 const settingsPath = path.resolve('settings.js');
@@ -151,6 +152,17 @@ function saldoLabel(balance = 0) {
 // === 📁 FILE PATHS (SINGLE SOURCE) ===
 const DB_PATH = path.resolve(__dirname, "data/db.json");
 const PRODUCTS_PATH = path.resolve(__dirname, "data/products.json"); // ← kita pakai ini
+const TX_PATH = path.resolve(__dirname, "data/transactions.json");
+const ORDERS_PATH = path.resolve(__dirname, "data/orders.json");
+
+initMongoSync({
+  dbPath: DB_PATH,
+  productsPath: PRODUCTS_PATH,
+  transactionsPath: TX_PATH,
+  ordersPath: ORDERS_PATH,
+}).catch((err) => {
+  console.error("⚠️ Gagal inisialisasi MongoDB sync:", err.message);
+});
 
 // === 🧩 PRODUK (load & save) — PAKAI products.json ===
 async function loadProducts() {
@@ -848,7 +860,6 @@ bot.hears(/^🛒 Stock/, async (ctx) => {
 });
 
   // === 💳 HANDLER TRANSAKSI ===
-const TX_PATH = path.resolve("data/transactions.json");
 
 // Load transaksi
 async function loadTransactions() {
@@ -881,7 +892,6 @@ async function saveTransactions(data) {
 }
 
 // === 📜 RIWAYAT TRANSAKSI (pagination 5 per halaman) ===
-const PRODUCTS_PATH = path.resolve('data/products.json');
 const PER_PAGE      = 5;
 
 // escape HTML aman
