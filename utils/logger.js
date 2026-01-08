@@ -1,5 +1,5 @@
 const winston = require('winston')
-const { default: chalk } = require('chalk')
+const chalk = require('chalk')
 const util = require('util')
 const path = require('path')
 require('dotenv').config({quiet: true})
