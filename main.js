@@ -522,8 +522,8 @@ bot.start(async (ctx) => {
   const chatId = String(ctx.chat.id);
   const user = ctx.from;
 
-  // 🚀 Baca data dari cache sederhana (biar gak delay)
-  if (!global.dbCache) global.dbCache = await loadDB();
+  // 🚀 Reload data dari file agar saldo tidak ke-reset oleh cache lama
+  global.dbCache = await loadDB();
 
   // 🧩 Perbaikan utama: selalu reload transactions.json biar realtime
   const txPath = path.join(__dirname, "data", "transactions.json");
