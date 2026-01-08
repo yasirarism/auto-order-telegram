@@ -144,6 +144,10 @@ function rupiah(n = 0) {
   return new Intl.NumberFormat("id-ID").format(n);
 }
 
+function saldoLabel(balance = 0) {
+  return `💰 Saldo Rp ${rupiah(balance)}`;
+}
+
 // === 📁 FILE PATHS (SINGLE SOURCE) ===
 const DB_PATH = path.resolve(__dirname, "data/db.json");
 const PRODUCTS_PATH = path.resolve(__dirname, "data/products.json"); // ← kita pakai ini
@@ -518,8 +522,8 @@ bot.start(async (ctx) => {
   const chatId = String(ctx.chat.id);
   const user = ctx.from;
 
-  // 🚀 Baca data dari cache sederhana (biar gak delay)
-  if (!global.dbCache) global.dbCache = await loadDB();
+  // 🚀 Reload data dari file agar saldo tidak ke-reset oleh cache lama
+  global.dbCache = await loadDB();
 
   // 🧩 Perbaikan utama: selalu reload transactions.json biar realtime
   const txPath = path.join(__dirname, "data", "transactions.json");
@@ -557,6 +561,8 @@ bot.start(async (ctx) => {
   }
 
   const me = db.users[chatId];
+  if (user?.username && me.username !== user.username) me.username = user.username;
+  if (user?.first_name && me.first_name !== user.first_name) me.first_name = user.first_name;
   const now = fmtFull();
   const totalUsers = db.stats.totalUsers || 1;
 
@@ -610,10 +616,10 @@ bot.start(async (ctx) => {
     `<i>Dikelola oleh ${AUTHOR} © 2025</i>`
   ].join('\n');
 
-  // 🎛️ Keyboard utama (versi fix: tombol saldo diganti jadi stok)
+  // 🎛️ Keyboard utama
   const keyboard = Markup.keyboard([
     ['🧾 List Produk', '🛒 Stock'],
-    ['📜 Riwayat Transaksi'],
+    [saldoLabel(me.balance), '📜 Riwayat Transaksi'],
     ['❓ Cara Order']
   ]).resize();
 
@@ -700,11 +706,11 @@ for (let i = 0; i < productButtons.length; i += 6) {
   rows.push(productButtons.slice(i, i + 6));
 }
 
-// 🎛️ Keyboard utama (versi fix: ganti tombol saldo → stok)
+// 🎛️ Keyboard utama
 const keyboard = Markup.keyboard([
   ['🧾 List Produk', '🛒 Stock'],
   ...rows,
-  ['📜 Riwayat Transaksi']
+  [saldoLabel(me.balance), '📜 Riwayat Transaksi']
 ]).resize();
 
 if (fs.existsSync(bannerPath)) {
@@ -715,6 +721,77 @@ if (fs.existsSync(bannerPath)) {
 } else {
   await ctx.reply(listText, { parse_mode: 'HTML', ...keyboard });
 }
+});
+
+// === 💰 SALDO & TOPUP ===
+bot.hears(/^💰 Saldo/, async (ctx) => {
+  try {
+    const chatId = String(ctx.chat.id);
+    const db = await loadDB();
+    const me = db.users[chatId] || { balance: 0 };
+    const now = dayjs().tz().format("HH.mm.ss [WIB]");
+
+    const text = [
+      `<b>💰 INFO SALDO</b>`,
+      `╭──────────────────────╮`,
+      `├ <b>User:</b> ${esc(me.first_name || me.username || "Pengguna")}`,
+      `├ <b>Sisa Saldo:</b> Rp ${rupiah(me.balance || 0)}`,
+      `╰──────────────────────╯`,
+      ``,
+      `Pilih menu di bawah untuk isi saldo/topup.`,
+      ``,
+      `🔄 <i>Refresh at ${now}</i>`,
+    ].join("\n");
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback("📥 Isi Saldo / Topup", "saldo_topup")],
+    ]);
+
+    await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
+  } catch (err) {
+    console.error("❌ Error saldo menu:", err);
+    await ctx.reply("❌ Gagal menampilkan saldo.");
+  }
+});
+
+bot.action("saldo_topup", async (ctx) => {
+  try {
+    const settings = getSettings();
+    const admins = settings.admins || [];
+    const adminLines = admins.length
+      ? admins.map((a) => {
+          const name = a.username ? `@${a.username}` : (a.id ? a.id : "-");
+          return `• ${name}`;
+        })
+      : ["• (admin belum diset di settings.js)"];
+
+    const text = [
+      `<b>📥 ISI SALDO / TOPUP</b>`,
+      ``,
+      `Silakan hubungi admin untuk isi saldo manual.`,
+      ``,
+      `<b>Kontak Admin:</b>`,
+      ...adminLines,
+    ].join("\n");
+
+    const adminWithUsername = admins.find((a) => a.username);
+    const keyboard = adminWithUsername
+      ? Markup.inlineKeyboard([
+          [Markup.button.url("💬 Hubungi Admin", `https://t.me/${adminWithUsername.username}`)],
+        ])
+      : undefined;
+
+    await ctx.editMessageText(text, {
+      parse_mode: "HTML",
+      ...(keyboard ? keyboard : {}),
+    });
+    await ctx.answerCbQuery();
+  } catch (err) {
+    console.error("❌ Error saldo_topup:", err);
+    try {
+      await ctx.answerCbQuery("Gagal membuka menu topup.");
+    } catch {}
+  }
 });
 
 // === 🛒 Stock ===
@@ -822,9 +899,27 @@ const tsWIB = (ms) => {
   } catch { return '-'; }
 };
 
+const formatTxTime = (tx) => {
+  const raw = tx?.timestamp ?? tx?.created_at ?? tx?.paid_at ?? tx?.createdAt ?? null;
+  if (!raw) return '-';
+  if (typeof raw === 'number') return tsWIB(raw);
+  const rawStr = String(raw);
+  if (/^\d+$/.test(rawStr)) return tsWIB(Number(rawStr));
+  return rawStr;
+};
+
+const txSortValue = (tx) => {
+  const raw = tx?.created_at ?? tx?.timestamp ?? tx?.paid_at ?? tx?.createdAt ?? 0;
+  if (typeof raw === 'number') return raw;
+  const rawStr = String(raw);
+  if (/^\d+$/.test(rawStr)) return Number(rawStr);
+  const parsed = Date.parse(rawStr);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
 const statusBadge = (s) => {
   s = String(s || '').toLowerCase();
-  if (['completed','paid','success'].includes(s)) return '✅ Selesai';
+  if (['completed','paid','success','sukses'].includes(s)) return '✅ Selesai';
   if (s === 'pending')   return '⏳ Pending';
   if (s === 'canceled')  return '❌ Dibatalkan';
   if (s === 'expired')   return '⏰ Kadaluarsa';
@@ -860,19 +955,22 @@ bot.hears('📜 Riwayat Transaksi', async (ctx) => {
     const end   = start + PER_PAGE;
 
     // terbaru duluan
-    const txPage = userTx.slice().sort((a,b) => (b.created_at||0)-(a.created_at||0)).slice(start, end);
+    const txPage = userTx
+      .slice()
+      .sort((a, b) => txSortValue(b) - txSortValue(a))
+      .slice(start, end);
 
     const items = txPage.map(t => {
       const prod = prodIndex[String(t.product_id)];
-      const prodName = prod?.name || 'Tanpa Nama';
-      const variant  = t.variant_name || '-';
-      const qty      = Number(t.qty || 1);
-      const amount   = Number(t.total_amount ?? t.amount ?? 0);
-      const method   = String(t.method || '-').toUpperCase();
-      const akun     = t.username ? `@${t.username}` : 'Tidak ada akun tercatat';
-      const ref      = t.reference_id || '-';
+      const prodName = prod?.name || t.product || 'Tanpa Nama';
+      const variant  = t.variant_name || t.variant || '-';
+      const qty      = Number(t.qty ?? t.jumlah ?? 1);
+      const amount   = Number(t.total_amount ?? t.total ?? t.amount ?? t.price ?? 0);
+      const method   = String(t.method || t.payment_method || '-').toUpperCase();
+      const akun     = t.username ? `@${t.username}` : (t.user || 'Tidak ada akun tercatat');
+      const ref      = t.reference_id || t.reference || '-';
       const idStr    = t.id != null ? `#${t.id}` : '-';
-      const when     = tsWIB(t.created_at);
+      const when     = formatTxTime(t);
 
       return [
         '╭──────────────────────────',
@@ -957,19 +1055,22 @@ bot.action(/^tx_page_(\d+)$/, async (ctx) => {
   const start = (p - 1) * PER_PAGE;
   const end   = start + PER_PAGE;
 
-  const txPage = userTx.slice().sort((a,b) => (b.created_at||0)-(a.created_at||0)).slice(start, end);
+  const txPage = userTx
+    .slice()
+    .sort((a, b) => txSortValue(b) - txSortValue(a))
+    .slice(start, end);
 
   const items = txPage.map(t => {
     const prod = prodIndex[String(t.product_id)];
-    const prodName = prod?.name || 'Tanpa Nama';
-    const variant  = t.variant_name || '-';
-    const qty      = Number(t.qty || 1);
-    const amount   = Number(t.total_amount ?? t.amount ?? 0);
-    const method   = String(t.method || '-').toUpperCase();
-    const akun     = t.username ? `@${t.username}` : 'Tidak ada akun tercatat';
-    const ref      = t.reference_id || '-';
+    const prodName = prod?.name || t.product || 'Tanpa Nama';
+    const variant  = t.variant_name || t.variant || '-';
+    const qty      = Number(t.qty ?? t.jumlah ?? 1);
+    const amount   = Number(t.total_amount ?? t.total ?? t.amount ?? t.price ?? 0);
+    const method   = String(t.method || t.payment_method || '-').toUpperCase();
+    const akun     = t.username ? `@${t.username}` : (t.user || 'Tidak ada akun tercatat');
+    const ref      = t.reference_id || t.reference || '-';
     const idStr    = t.id != null ? `#${t.id}` : '-';
-    const when     = tsWIB(t.created_at);
+    const when     = formatTxTime(t);
 
     return [
       '╭──────────────────────────',
@@ -3479,6 +3580,126 @@ bot.command("kirim", async (ctx) => {
   }
 });
 
+// === 💰 SALDO MANUAL (ADMIN ONLY)
+// Format: /saldo <id/@username> <jumlah> [catatan]
+// Contoh: /saldo @user 10000 Top up manual
+// Bisa juga reply user: /saldo 10000 Top up manual
+bot.command("saldo", async (ctx) => {
+  try {
+    if (!isAdminNow(ctx)) return ctx.reply("🚫 Kamu bukan admin.");
+
+    const raw = (ctx.message?.text || "").trim();
+    const args = raw.split(" ").slice(1);
+    const replyUser = ctx.message?.reply_to_message?.from;
+
+    let targetRef = args[0];
+    let amountRaw = args[1];
+    let note = args.slice(2).join(" ").trim();
+
+    if (replyUser && args.length >= 1) {
+      targetRef = String(replyUser.id);
+      amountRaw = args[0];
+      note = args.slice(1).join(" ").trim();
+    }
+
+    if (!targetRef || !amountRaw) {
+      return ctx.reply(
+        [
+          "⚙️ Format: /saldo <id/@username> <jumlah> [catatan]",
+          "Contoh: /saldo @user 10000 Top up manual",
+          "Atau reply user: /saldo 10000 Top up manual",
+        ].join("\n")
+      );
+    }
+
+    const cleanAmount = String(amountRaw).replace(/[^\d-]/g, "");
+    const amount = Number(cleanAmount);
+    if (!Number.isFinite(amount) || amount === 0) {
+      return ctx.reply("⚠️ Jumlah saldo tidak valid. Gunakan angka, contoh: 10000");
+    }
+
+    const db = await loadDB();
+    const users = db.users || {};
+
+    let targetId = null;
+    let targetUser = null;
+
+    if (/^\d+$/.test(String(targetRef))) {
+      targetId = String(targetRef);
+      targetUser = users[targetId] || null;
+    } else {
+      const uname = String(targetRef).replace(/^@/, "").toLowerCase();
+      const found = Object.values(users).find(
+        (u) => u?.username && String(u.username).toLowerCase() === uname
+      );
+      if (found) {
+        targetId = String(found.id);
+        targetUser = found;
+      }
+    }
+
+    if (!targetId) {
+      return ctx.reply("❌ User tidak ditemukan. Pastikan user sudah /start bot.");
+    }
+
+    if (!targetUser) {
+      targetUser = {
+        id: targetId,
+        username: null,
+        first_name: null,
+        transaksi: 0,
+        balance: 0,
+        createdAt: Date.now(),
+      };
+      users[targetId] = targetUser;
+    }
+
+    const currentBalance = Number(targetUser.balance || 0);
+    const nextBalance = currentBalance + amount;
+
+    if (nextBalance < 0) {
+      return ctx.reply("⚠️ Saldo user tidak cukup untuk pengurangan ini.");
+    }
+
+    targetUser.balance = nextBalance;
+    await saveDB(db);
+
+    const changeLabel = amount > 0 ? "Top up" : "Pengurangan";
+    const changeText = `${amount > 0 ? "+" : "-"}Rp ${rupiah(Math.abs(amount))}`;
+    const userText = [
+      `💰 <b>Saldo kamu telah diperbarui</b>`,
+      `├ <b>Jenis:</b> ${changeLabel} manual`,
+      `├ <b>Perubahan:</b> ${changeText}`,
+      `├ <b>Saldo sekarang:</b> Rp ${rupiah(nextBalance)}`,
+      note ? `├ <b>Catatan:</b> ${esc(note)}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const sent = await sendMessageSafe(bot, targetId, userText, {
+      parse_mode: "HTML",
+    });
+
+    const adminAck = [
+      `✅ <b>Saldo diperbarui</b>`,
+      `├ <b>Target:</b> ${targetUser.username ? "@" + targetUser.username : targetId}`,
+      `├ <b>Perubahan:</b> ${changeText}`,
+      `├ <b>Saldo akhir:</b> Rp ${rupiah(nextBalance)}`,
+      note ? `├ <b>Catatan:</b> ${esc(note)}` : null,
+      sent ? `├ <b>Notifikasi:</b> Terkirim` : `├ <b>Notifikasi:</b> Gagal (user belum /start?)`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    await ctx.reply(adminAck, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("❌ Error di /saldo:", err);
+    try {
+      await ctx.reply("❌ Gagal memproses /saldo, cek log server.");
+    } catch {}
+  }
+});
+
 // =======================
 // 🟢 DETEKSI BROADCAST DI SEMUA MEDIA (foto, video, dokumen, GIF, dll)
 // =======================
@@ -4168,8 +4389,12 @@ if (data.startsWith("refresh_")) {
         ],
         [
           {
-            text: "💳 BAYAR DENGAN QRIS 💳",
+            text: "💳 QRIS",
             callback_data: `pay_qris_${pid}_${variantName}`,
+          },
+          {
+            text: "💰 Saldo",
+            callback_data: `pay_saldo_${pid}_${variantName}`,
           },
         ],
         [{ text: "🔁 Refresh", callback_data: `refresh_${pid}` }],
@@ -4330,8 +4555,12 @@ if (data.startsWith("buy_")) {
     ],
     [
       {
-        text: "💳 BAYAR DENGAN QRIS 💳",
+        text: "💳 QRIS",
         callback_data: `pay_qris_${pid}_${variantName}`,
+      },
+      {
+        text: "💰 Saldo",
+        callback_data: `pay_saldo_${pid}_${variantName}`,
       },
     ],
     [{ text: "🔁 Refresh", callback_data: `refresh_${pid}` }],
@@ -4390,8 +4619,12 @@ if (data.startsWith("inc_") || data.startsWith("dec_")) {
     ],
     [
       {
-        text: "💳 BAYAR DENGAN QRIS 💳",
+        text: "💳 QRIS",
         callback_data: `pay_qris_${pid}_${variantName}`,
+      },
+      {
+        text: "💰 Saldo",
+        callback_data: `pay_saldo_${pid}_${variantName}`,
       },
     ],
     [{ text: "🔁 Refresh", callback_data: `refresh_${pid}` }],
@@ -5226,7 +5459,8 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
     `🔹 <b>/laporan</b> — <code>Omzet Hari Ini</code>`, // Perintah baru
     `🔹 <b>/cekid</b> — <code>Detail Transaksi</code>`,
     `🔹 <b>/riwayat</b> — <code>Cek User (@/ID)</code>`,
-    `🔹 <b>/kirim</b> — <code>Kirim Manual</code>`
+    `🔹 <b>/kirim</b> — <code>Kirim Manual</code>`,
+    `🔹 <b>/saldo</b> — <code>Top up Saldo Manual</code>`
   ].join("\n");
 } else {
       categoryText = [
