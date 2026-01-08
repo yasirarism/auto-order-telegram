@@ -561,6 +561,8 @@ bot.start(async (ctx) => {
   }
 
   const me = db.users[chatId];
+  if (user?.username && me.username !== user.username) me.username = user.username;
+  if (user?.first_name && me.first_name !== user.first_name) me.first_name = user.first_name;
   const now = fmtFull();
   const totalUsers = db.stats.totalUsers || 1;
 
