@@ -39,6 +39,7 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `QR_STRING` — string QR jika diperlukan.
 - `PAYMENT_EXPIRES_MINUTES` — batas waktu pembayaran (menit).
 - `PAYMENT_GATEWAY` — nama payment gateway (contoh: `gopay`).
+- `GOBIZ_REQUEST_TIMEOUT_MS` — timeout request API GoBiz (milidetik).
 - `GOBIZ_EMAIL` — email akun GoBiz (jika digunakan).
 - `GOBIZ_PASSWORD` — password akun GoBiz (jika digunakan).
 
