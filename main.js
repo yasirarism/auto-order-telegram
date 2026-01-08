@@ -29,7 +29,7 @@ const FormData = require("form-data");
 const Transactions = require("./lib/transactions");
 const txHandler = new Transactions();
 const Database = require("./lib/database");
-const { initMongoSync } = require("./lib/mongo-sync");
+const { readStore, writeStore } = require("./lib/persistent-store");
 const tx = new Database("data/transactions.json");
 const logger = require("./utils/logger");
 const settingsPath = path.resolve('settings.js');
@@ -112,16 +112,11 @@ function isAdminNow(ctx) {
 const productPath = path.join(__dirname, "data", "products.json");
 
 async function loadProducts() {
-  try {
-    const data = await fs.readFile(productPath, "utf8");
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
+  return readStore({ key: "products", filePath: productPath, fallback: [] });
 }
 
 async function saveProducts(products) {
-  await fs.writeFile(productPath, JSON.stringify(products, null, 2));
+  await writeStore({ key: "products", filePath: productPath, value: products });
 }
 
 // 🧩 tambahkan 'session' biar ctx.session berfungsi
@@ -153,74 +148,27 @@ function saldoLabel(balance = 0) {
 const DB_PATH = path.resolve(__dirname, "data/db.json");
 const PRODUCTS_PATH = path.resolve(__dirname, "data/products.json"); // ← kita pakai ini
 const TX_PATH = path.resolve(__dirname, "data/transactions.json");
-const ORDERS_PATH = path.resolve(__dirname, "data/orders.json");
-
-initMongoSync({
-  dbPath: DB_PATH,
-  productsPath: PRODUCTS_PATH,
-  transactionsPath: TX_PATH,
-  ordersPath: ORDERS_PATH,
-}).catch((err) => {
-  console.error("⚠️ Gagal inisialisasi MongoDB sync:", err.message);
-});
 
 // === 🧩 PRODUK (load & save) — PAKAI products.json ===
 async function loadProducts() {
-  try {
-    if (!fs.existsSync(PRODUCTS_PATH)) {
-      await fsp.writeFile(PRODUCTS_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(PRODUCTS_PATH, "utf8");
-    const data = JSON.parse(txt);
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    console.error("⚠️ Gagal baca products.json:", e.message);
-    return [];
-  }
+  return readStore({ key: "products", filePath: PRODUCTS_PATH, fallback: [] });
 }
 async function saveProducts(products) {
-  try {
-    await fsp.writeFile(PRODUCTS_PATH, JSON.stringify(products, null, 2), "utf8");
-  } catch (e) {
-    console.error("⚠️ Gagal simpan products.json:", e.message);
-  }
+  await writeStore({ key: "products", filePath: PRODUCTS_PATH, value: products });
 }
 
 // === 🗄️ DATABASE (db.json) ===
 async function loadDB() {
-  try {
-    if (!fs.existsSync(DB_PATH)) {
-      const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
-      await saveDB(init);
-      return init;
-    }
-    const txt = await fsp.readFile(DB_PATH, "utf8");
-    return JSON.parse(txt);
-  } catch {
-    const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
-    await saveDB(init);
-    return init;
-  }
+  const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
+  return readStore({ key: "db", filePath: DB_PATH, fallback: init });
 }
 async function saveDB(db) {
-  await fsp.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+  await writeStore({ key: "db", filePath: DB_PATH, value: db });
 }
 
 // === 💳 TRANSAKSI (transactions.json) ===
 async function loadTransactions() {
-  try {
-    if (!fs.existsSync(TX_PATH)) {
-      await fsp.writeFile(TX_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(TX_PATH, "utf8");
-    const data = JSON.parse(txt);
-    return Array.isArray(data) ? data : [];
-  } catch {
-    await fsp.writeFile(TX_PATH, "[]", "utf8");
-    return [];
-  }
+  return readStore({ key: "transactions", filePath: TX_PATH, fallback: [] });
 }
 
 // === 🤖 INIT BOT (SINGLE SOURCE) ===
@@ -863,28 +811,13 @@ bot.hears(/^🛒 Stock/, async (ctx) => {
 
 // Load transaksi
 async function loadTransactions() {
-  try {
-    if (!fs.existsSync(TX_PATH)) {
-      await fsp.writeFile(TX_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(TX_PATH, "utf8");
-    const data = JSON.parse(txt);
-    return Array.isArray(data) ? data : [];
-  } catch (err) {
-    console.error("⚠️ Gagal load transactions.json:", err.message);
-    await fsp.writeFile(TX_PATH, "[]", "utf8");
-    return [];
-  }
+  return readStore({ key: "transactions", filePath: TX_PATH, fallback: [] });
 }
 
 // Simpan transaksi
 async function saveTransactions(data) {
   try {
-    if (!fs.existsSync(path.dirname(TX_PATH))) {
-      fs.mkdirSync(path.dirname(TX_PATH), { recursive: true });
-    }
-    await fsp.writeFile(TX_PATH, JSON.stringify(data, null, 2), "utf8");
+    await writeStore({ key: "transactions", filePath: TX_PATH, value: data });
     console.log("✅ Transactions berhasil disimpan");
   } catch (err) {
     console.error("❌ Gagal simpan transactions.json:", err.message);
@@ -939,11 +872,7 @@ const statusBadge = (s) => {
 bot.hears('📜 Riwayat Transaksi', async (ctx) => {
   const chatId = String(ctx.chat.id);
 
-  if (!fs.existsSync(TX_PATH)) {
-    return ctx.reply('📭 Belum ada transaksi yang tercatat.');
-  }
-
-  const txAll = JSON.parse(fs.readFileSync(TX_PATH, 'utf8') || '[]');
+  const txAll = await loadTransactions();
   const userTx = (txAll || []).filter(t => String(t.user_id) === chatId);
 
   if (!userTx.length) {
@@ -951,9 +880,7 @@ bot.hears('📜 Riwayat Transaksi', async (ctx) => {
   }
 
   // load products buat resolve nama
-  const products = fs.existsSync(PRODUCTS_PATH)
-    ? (JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8') || '[]') || [])
-    : [];
+  const products = await loadProducts();
   const prodIndex = Object.fromEntries(products.map(p => [String(p.id), p]));
 
   const totalPages = Math.max(1, Math.ceil(userTx.length / PER_PAGE));
@@ -5632,15 +5559,6 @@ bot.action("refresh_report", async (ctx) => {
     return s || '-';
   };
 
-  // util baca file aman
-  const readJsonSafe = (p, fallback=[]) => {
-    try {
-      if (!fs.existsSync(p)) return fallback;
-      const raw = fs.readFileSync(p,'utf8');
-      return JSON.parse(raw);
-    } catch { return fallback; }
-  };
-
 // === 👑 /riwayat (ADMIN ONLY — by username atau ID) ===
 bot.command('riwayat', async (ctx) => {
   try {
@@ -5648,7 +5566,6 @@ bot.command('riwayat', async (ctx) => {
 
     // helper lokal (biar gak bentrok sama yang lain)
     const PER_PAGE_ADMIN = 5;
-    const readJsonSafe = (p, def) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return def; } };
     const escAdm  = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const fmtRpAdm = (n) => new Intl.NumberFormat('id-ID').format(Number(n || 0));
     const tsWIBAdm = (ms) => {
@@ -5680,9 +5597,9 @@ bot.command('riwayat', async (ctx) => {
     const txPath   = path.resolve('data/transactions.json');
     const prodPath = path.resolve('data/products.json');
 
-    const db       = readJsonSafe(dbPath, { users: {} });
-    const allTx    = readJsonSafe(txPath, []);
-    const prodArr  = readJsonSafe(prodPath, []);
+    const db       = await readStore({ key: "db", filePath: dbPath, fallback: { users: {} } });
+    const allTx    = await readStore({ key: "transactions", filePath: txPath, fallback: [] });
+    const prodArr  = await readStore({ key: "products", filePath: prodPath, fallback: [] });
     const prodMap  = Object.fromEntries((prodArr || []).map(p => [String(p.id), p.name]));
 
     // cari user by ID atau username
@@ -5785,7 +5702,6 @@ bot.action(/adm_page_(\d+)_(\d+)/, async (ctx) => {
 
     // helper lokal (lagi supaya gak bentrok)
     const PER_PAGE_ADMIN = 5;
-    const readJsonSafe = (p, def) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return def; } };
     const escAdm  = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const fmtRpAdm = (n) => new Intl.NumberFormat('id-ID').format(Number(n || 0));
     const tsWIBAdm = (ms) => {
@@ -5812,9 +5728,9 @@ bot.action(/adm_page_(\d+)_(\d+)/, async (ctx) => {
     const dbPath   = path.resolve('data/db.json');
     const prodPath = path.resolve('data/products.json');
 
-    const allTx   = readJsonSafe(txPath, []);
-    const db      = readJsonSafe(dbPath, { users: {} });
-    const prodArr = readJsonSafe(prodPath, []);
+    const allTx   = await readStore({ key: "transactions", filePath: txPath, fallback: [] });
+    const db      = await readStore({ key: "db", filePath: dbPath, fallback: { users: {} } });
+    const prodArr = await readStore({ key: "products", filePath: prodPath, fallback: [] });
     const prodMap = Object.fromEntries((prodArr || []).map(p => [String(p.id), p.name]));
 
     const target = db.users[userId];
