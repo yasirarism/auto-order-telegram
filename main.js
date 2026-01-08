@@ -144,6 +144,10 @@ function rupiah(n = 0) {
   return new Intl.NumberFormat("id-ID").format(n);
 }
 
+function saldoLabel(balance = 0) {
+  return `💰 Saldo Rp ${rupiah(balance)}`;
+}
+
 // === 📁 FILE PATHS (SINGLE SOURCE) ===
 const DB_PATH = path.resolve(__dirname, "data/db.json");
 const PRODUCTS_PATH = path.resolve(__dirname, "data/products.json"); // ← kita pakai ini
@@ -613,7 +617,7 @@ bot.start(async (ctx) => {
   // 🎛️ Keyboard utama
   const keyboard = Markup.keyboard([
     ['🧾 List Produk', '🛒 Stock'],
-    ['💰 Saldo', '📜 Riwayat Transaksi'],
+    [saldoLabel(me.balance), '📜 Riwayat Transaksi'],
     ['❓ Cara Order']
   ]).resize();
 
@@ -704,7 +708,7 @@ for (let i = 0; i < productButtons.length; i += 6) {
 const keyboard = Markup.keyboard([
   ['🧾 List Produk', '🛒 Stock'],
   ...rows,
-  ['💰 Saldo', '📜 Riwayat Transaksi']
+  [saldoLabel(me.balance), '📜 Riwayat Transaksi']
 ]).resize();
 
 if (fs.existsSync(bannerPath)) {
@@ -718,7 +722,7 @@ if (fs.existsSync(bannerPath)) {
 });
 
 // === 💰 SALDO & TOPUP ===
-bot.hears('💰 Saldo', async (ctx) => {
+bot.hears(/^💰 Saldo/, async (ctx) => {
   try {
     const chatId = String(ctx.chat.id);
     const db = await loadDB();
@@ -893,9 +897,27 @@ const tsWIB = (ms) => {
   } catch { return '-'; }
 };
 
+const formatTxTime = (tx) => {
+  const raw = tx?.timestamp ?? tx?.created_at ?? tx?.paid_at ?? tx?.createdAt ?? null;
+  if (!raw) return '-';
+  if (typeof raw === 'number') return tsWIB(raw);
+  const rawStr = String(raw);
+  if (/^\d+$/.test(rawStr)) return tsWIB(Number(rawStr));
+  return rawStr;
+};
+
+const txSortValue = (tx) => {
+  const raw = tx?.created_at ?? tx?.timestamp ?? tx?.paid_at ?? tx?.createdAt ?? 0;
+  if (typeof raw === 'number') return raw;
+  const rawStr = String(raw);
+  if (/^\d+$/.test(rawStr)) return Number(rawStr);
+  const parsed = Date.parse(rawStr);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
 const statusBadge = (s) => {
   s = String(s || '').toLowerCase();
-  if (['completed','paid','success'].includes(s)) return '✅ Selesai';
+  if (['completed','paid','success','sukses'].includes(s)) return '✅ Selesai';
   if (s === 'pending')   return '⏳ Pending';
   if (s === 'canceled')  return '❌ Dibatalkan';
   if (s === 'expired')   return '⏰ Kadaluarsa';
@@ -931,19 +953,22 @@ bot.hears('📜 Riwayat Transaksi', async (ctx) => {
     const end   = start + PER_PAGE;
 
     // terbaru duluan
-    const txPage = userTx.slice().sort((a,b) => (b.created_at||0)-(a.created_at||0)).slice(start, end);
+    const txPage = userTx
+      .slice()
+      .sort((a, b) => txSortValue(b) - txSortValue(a))
+      .slice(start, end);
 
     const items = txPage.map(t => {
       const prod = prodIndex[String(t.product_id)];
-      const prodName = prod?.name || 'Tanpa Nama';
-      const variant  = t.variant_name || '-';
-      const qty      = Number(t.qty || 1);
-      const amount   = Number(t.total_amount ?? t.amount ?? 0);
-      const method   = String(t.method || '-').toUpperCase();
-      const akun     = t.username ? `@${t.username}` : 'Tidak ada akun tercatat';
-      const ref      = t.reference_id || '-';
+      const prodName = prod?.name || t.product || 'Tanpa Nama';
+      const variant  = t.variant_name || t.variant || '-';
+      const qty      = Number(t.qty ?? t.jumlah ?? 1);
+      const amount   = Number(t.total_amount ?? t.total ?? t.amount ?? t.price ?? 0);
+      const method   = String(t.method || t.payment_method || '-').toUpperCase();
+      const akun     = t.username ? `@${t.username}` : (t.user || 'Tidak ada akun tercatat');
+      const ref      = t.reference_id || t.reference || '-';
       const idStr    = t.id != null ? `#${t.id}` : '-';
-      const when     = tsWIB(t.created_at);
+      const when     = formatTxTime(t);
 
       return [
         '╭──────────────────────────',
@@ -1028,19 +1053,22 @@ bot.action(/^tx_page_(\d+)$/, async (ctx) => {
   const start = (p - 1) * PER_PAGE;
   const end   = start + PER_PAGE;
 
-  const txPage = userTx.slice().sort((a,b) => (b.created_at||0)-(a.created_at||0)).slice(start, end);
+  const txPage = userTx
+    .slice()
+    .sort((a, b) => txSortValue(b) - txSortValue(a))
+    .slice(start, end);
 
   const items = txPage.map(t => {
     const prod = prodIndex[String(t.product_id)];
-    const prodName = prod?.name || 'Tanpa Nama';
-    const variant  = t.variant_name || '-';
-    const qty      = Number(t.qty || 1);
-    const amount   = Number(t.total_amount ?? t.amount ?? 0);
-    const method   = String(t.method || '-').toUpperCase();
-    const akun     = t.username ? `@${t.username}` : 'Tidak ada akun tercatat';
-    const ref      = t.reference_id || '-';
+    const prodName = prod?.name || t.product || 'Tanpa Nama';
+    const variant  = t.variant_name || t.variant || '-';
+    const qty      = Number(t.qty ?? t.jumlah ?? 1);
+    const amount   = Number(t.total_amount ?? t.total ?? t.amount ?? t.price ?? 0);
+    const method   = String(t.method || t.payment_method || '-').toUpperCase();
+    const akun     = t.username ? `@${t.username}` : (t.user || 'Tidak ada akun tercatat');
+    const ref      = t.reference_id || t.reference || '-';
     const idStr    = t.id != null ? `#${t.id}` : '-';
-    const when     = tsWIB(t.created_at);
+    const when     = formatTxTime(t);
 
     return [
       '╭──────────────────────────',
