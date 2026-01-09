@@ -5200,7 +5200,7 @@ bot.action(/^paid_qris_(\d+)$/, async (ctx) => {
       });
 
     try {
-      logger.debug("Memulai pembuatan transaksi QRIS", {
+      logger.info("Memulai pembuatan transaksi QRIS", {
         chatId,
         productId: product.id,
         variant: variant.name,
