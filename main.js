@@ -3201,7 +3201,7 @@ bot.command("cekid", async (ctx) => {
     // deretan field yang diminta
     const lines = [
       `ID Customer   : ${t.user_id ?? ""}`,
-      `${PAYMENT_GATEWAY_LABEL} ID    : ${t.reference_id ?? ""}`,
+      `Faktur        : ${t.reference_id ?? ""}`,
       `Username      : ${t.username ?? ""}`,
       `Produk        : ${productName} [${productCode}]`,
       `Varian        : ${t.variant_name ?? ""}`,
