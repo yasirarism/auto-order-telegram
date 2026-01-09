@@ -22,7 +22,7 @@
     "fs-extra": "^11.3.3",
     "lowdb": "^7.0.1",
     "main.js": "^0.0.1",
-    "mongodb-js/saslprep": "^1.2.0",
+    "saslprep": "^1.0.3",
     "mongodb": "^6.10.0",
     "telegraf": "^4.16.3",
     "uuid": "^13.0.0",
