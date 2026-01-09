@@ -13,6 +13,7 @@ Bot Telegram untuk kebutuhan auto order. Project ini berjalan di Node.js 22 dan 
 
 - Node.js 22+ dan npm.
 - Token bot Telegram dari BotFather.
+- MongoDB (lokal atau cloud).
 
 ## Struktur Project (ringkas)
 
@@ -36,6 +37,8 @@ Berikut variabel penting yang tersedia di `.env.example`:
 
 - `BOT_TOKEN` — token bot dari BotFather.
 - `TZ` — timezone, contoh `Asia/Jakarta`.
+- `MONGODB_URI` — koneksi MongoDB, contoh `mongodb://localhost:27017`.
+- `MONGODB_DB` — nama database MongoDB, contoh `auto_order`.
 - `QR_STRING` — string QR jika diperlukan.
 - `PAYMENT_EXPIRES_MINUTES` — batas waktu pembayaran (menit).
 - `PAYMENT_GATEWAY` — nama payment gateway (contoh: `gopay`).
