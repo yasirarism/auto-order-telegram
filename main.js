@@ -4902,7 +4902,7 @@ if (data.startsWith("cancel_pay_")) {
   '╔════════════════════════╗',
   '║ Status       : Dibatalkan oleh pengguna',
   `║ Waktu        : ${canceledAt}`,
-  `║ ID Transaksi :`,
+  `║ ${PAYMENT_GATEWAY_LABEL} ID :`,
   `║ ${rec.reference_id || rec.refId || rec.id}`,
   '╚════════════════════════╝',
   '',
