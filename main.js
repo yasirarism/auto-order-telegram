@@ -5182,14 +5182,41 @@ bot.action(/^paid_qris_(\d+)$/, async (ctx) => {
 
     // === KIRIM QR + TOMBOL BATAL ===
     let createTx;
+    const createTimeoutMs = Number(process.env.QRIS_CREATE_TIMEOUT_MS ?? 20000);
+    const withTimeout = (promise, ms) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`QRIS create timeout after ${ms}ms`));
+        }, ms);
+        promise
+          .then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+          })
+          .catch((err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+      });
+
     try {
-      createTx = await trx.create(
+      logger.debug("Memulai pembuatan transaksi QRIS", {
         chatId,
-        user.username,
-        product.id,
-        variant.name,
+        productId: product.id,
+        variant: variant.name,
         total,
-        jumlah
+        jumlah,
+      });
+      createTx = await withTimeout(
+        trx.create(
+          chatId,
+          user.username,
+          product.id,
+          variant.name,
+          total,
+          jumlah
+        ),
+        createTimeoutMs
       );
     } catch (err) {
       logger.error("Gagal membuat transaksi QRIS:", err);
