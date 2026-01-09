@@ -193,7 +193,13 @@ function maskUserId(id) {
 async function sendPaymentAnnouncement(bot, chatTarget, payload) {
   const png = await buildPaymentCardPNG(payload);
   const htmlDetail = buildPaymentText(payload);
-  const botName = process.env.BOT_NAME_CHANNEL || "@sphynixstore_bot";
+  let botName = "auto";
+  try {
+    const me = await bot.telegram.getMe();
+    if (me?.username) {
+      botName = `@${me.username}`;
+    }
+  } catch (_) {}
 
   const testiBox = [
     "━━━━━━━━━━━━━━━",
