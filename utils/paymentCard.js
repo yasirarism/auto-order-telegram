@@ -68,15 +68,18 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   ctx.fillText(line, x, y);
 }
 
+const DEFAULT_STORE_NAME = process.env.STORE_NAME || "SPHYNIXSTORE";
+const DEFAULT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
+
 // ============ BIKIN GAMBAR PAYMENT CARD ============
 async function buildPaymentCardPNG({
-  store = "SPHYNIXSTORE",
+  store = DEFAULT_STORE_NAME,
   tanggalOrder = new Date(),
   totalBayar = 0,
   product = "-",
   variasi = "-",
   statusPembayaran = "Berhasil ✅",
-  note = "Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ Gateway Payment ]",
+  note = `Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${DEFAULT_GATEWAY_LABEL} ]`,
   jumlah,
   qty,
 } = {}) {
@@ -153,7 +156,7 @@ async function buildPaymentCardPNG({
 
 // ============ TEKS CAPTION ============
 function buildPaymentText({
-  store = "SPHYNIXSTORE",
+  store = DEFAULT_STORE_NAME,
   tanggalOrder = new Date(),
   totalBayar = 0,
   product = "-",
@@ -179,8 +182,7 @@ function buildPaymentText({
     `- Status       : ${statusPembayaran}`,
   ].join("\n");
 
-  const gatewayLabel = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
-  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${gatewayLabel} ]</i>`;
+  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${DEFAULT_GATEWAY_LABEL} ]</i>`;
 }
 
 function maskUserId(id) {

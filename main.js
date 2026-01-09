@@ -43,6 +43,7 @@ dayjs.extend(tz);
 dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
 
 const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
+const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
 
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
@@ -3200,7 +3201,7 @@ bot.command("cekid", async (ctx) => {
     // deretan field yang diminta
     const lines = [
       `ID Customer   : ${t.user_id ?? ""}`,
-      `SENPRO ID    : ${t.reference_id ?? ""}`,
+      `${PAYMENT_GATEWAY_LABEL} ID    : ${t.reference_id ?? ""}`,
       `Username      : ${t.username ?? ""}`,
       `Produk        : ${productName} [${productCode}]`,
       `Varian        : ${t.variant_name ?? ""}`,
