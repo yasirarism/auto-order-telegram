@@ -68,21 +68,27 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   ctx.fillText(line, x, y);
 }
 
-const DEFAULT_STORE_NAME = process.env.STORE_NAME || "SPHYNIXSTORE";
-const DEFAULT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
+require("dotenv").config({ quiet: true });
+
+const getStoreName = () => process.env.STORE_NAME || "SPHYNIXSTORE";
+const getGatewayLabel = () => process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
 
 // ============ BIKIN GAMBAR PAYMENT CARD ============
 async function buildPaymentCardPNG({
-  store = DEFAULT_STORE_NAME,
+  store,
   tanggalOrder = new Date(),
   totalBayar = 0,
   product = "-",
   variasi = "-",
   statusPembayaran = "Berhasil ✅",
-  note = `Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${DEFAULT_GATEWAY_LABEL} ]`,
+  note,
   jumlah,
   qty,
 } = {}) {
+  const storeName = store || getStoreName();
+  const noteText =
+    note ||
+    `Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${getGatewayLabel()} ]`;
   const W = 1200, H = 650;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
@@ -121,7 +127,7 @@ async function buildPaymentCardPNG({
 
   ctx.fillStyle = "#e8ecf1";
   ctx.font = "bold 46px " + SANS;
-  ctx.fillText(`© ${store} ${tahun}`, 60, 110);
+  ctx.fillText(`© ${storeName} ${tahun}`, 60, 110);
 
   ctx.fillStyle = "#6ef3a5";
   ctx.font = "bold 40px " + SANS;
@@ -148,7 +154,7 @@ async function buildPaymentCardPNG({
 
   ctx.font = "22px " + SANS;
   ctx.globalAlpha = 0.7;
-  wrapText(ctx, note, startX, H - 90, W - 160, 28);
+  wrapText(ctx, noteText, startX, H - 90, W - 160, 28);
   ctx.globalAlpha = 1;
 
   return canvas.toBuffer("image/png");
@@ -156,7 +162,7 @@ async function buildPaymentCardPNG({
 
 // ============ TEKS CAPTION ============
 function buildPaymentText({
-  store = DEFAULT_STORE_NAME,
+  store,
   tanggalOrder = new Date(),
   totalBayar = 0,
   product = "-",
@@ -165,13 +171,14 @@ function buildPaymentText({
   jumlah,
   qty,
 }) {
+  const storeName = store || getStoreName();
   const dj = toLocal(tanggalOrder);
   const tgl = dj.format("DD MMMM YYYY");
   const jam = dj.format("HH:mm.ss") + ` ${ZONE_LABEL}`;
   const tahun = dj.format("YYYY");
   const qtyVal = Math.max(1, Number(jumlah ?? qty ?? 1));
 
-  const header = `© ${store} ${tahun}\n[ PAYMENT MONITORING ]`;
+  const header = `© ${storeName} ${tahun}\n[ PAYMENT MONITORING ]`;
   const body = [
     `- Tanggal      : ${tgl}`,
     `- Waktu        : ${jam}`,
@@ -182,7 +189,7 @@ function buildPaymentText({
     `- Status       : ${statusPembayaran}`,
   ].join("\n");
 
-  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${DEFAULT_GATEWAY_LABEL} ]</i>`;
+  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${getGatewayLabel()} ]</i>`;
 }
 
 function maskUserId(id) {
