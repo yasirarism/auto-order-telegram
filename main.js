@@ -48,6 +48,15 @@ const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
 
+const resolveAssetPath = (envKey, fallbackRel) => {
+  const raw = String(process.env[envKey] || "").trim();
+  if (raw) return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+  return path.resolve(__dirname, fallbackRel);
+};
+
+const INFO_BANNER_PATH = resolveAssetPath("INFO_BANNER_PATH", "assets/info.jpg");
+const CANCELED_BANNER_PATH = resolveAssetPath("CANCELED_BANNER_PATH", "assets/canceled.jpg");
+
 // Label zona untuk tampilan (WIB/WITA/WIT) + fallback ke UTC±offset untuk zona lain
 const tzLabel = (zone = APP_TZ) => {
   if (zone === "Asia/Jakarta")  return "WIB";   // UTC+7
@@ -594,7 +603,7 @@ bot.start(async (ctx) => {
     ['❓ Cara Order']
   ]).resize();
 
-  const bannerPath = path.resolve(__dirname, 'assets/info.jpg');
+    const bannerPath = INFO_BANNER_PATH;
   const caption = `🤖 ${BOT_NAME} — by ${AUTHOR}\n\n${text}`;
 
   // 🖼️ Kirim banner cuma kalau ada, biar cepat
@@ -647,7 +656,7 @@ bot.hears('🧾 List Produk', async (ctx) => {
 
   try { await ctx.deleteMessage(loadingMsg.message_id); } catch { }
 
-  const bannerPath = path.resolve(__dirname, 'assets/info.jpg');
+  const bannerPath = INFO_BANNER_PATH;
 
   // 🔄 AUTO LOAD PRODUK DARI DATABASE
   let PRODUCTS = [];
@@ -1349,7 +1358,7 @@ bot.command("addstok", async (ctx) => {
     const args = ctx.message.text.split(" ").slice(1).join(" ");
     if (!args.includes("|"))
       return ctx.reply(
-        "⚙️ Format salah!\nGunakan format:\n/addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)|..."
+        "⚙️ Format salah!\nGunakan format:\n/addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)|..."
       );
 
     const rawLines = args
@@ -1387,7 +1396,7 @@ bot.command("addstok", async (ctx) => {
           });
         } else {
           return ctx.reply(
-            "⚠️ Format salah!\nGunakan tiap baris:\ncode|varian|email|pass|2fa(optional)\natau\nemail|pass|2fa(optional) (pakai kode & varian dari baris pertama)."
+            "⚠️ Format salah!\nGunakan tiap baris:\ncode|varian|email|pass|pesan(optional)\natau\nemail|pass|pesan(optional) (pakai kode & varian dari baris pertama)."
           );
         }
       }
@@ -1399,7 +1408,7 @@ bot.command("addstok", async (ctx) => {
 
       if (!code || !inputVarian || credentials.length < 2)
         return ctx.reply(
-          "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)|..."
+          "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)|..."
         );
 
       let chunkSize = null;
@@ -1407,7 +1416,7 @@ bot.command("addstok", async (ctx) => {
       else if (credentials.length % 2 === 0) chunkSize = 2;
       if (!chunkSize)
         return ctx.reply(
-          "⚠️ Format stok tidak valid!\nGunakan pasangan email|password atau email|password|2FA/Pesan (opsional)."
+          "⚠️ Format stok tidak valid!\nGunakan pasangan email|password atau email|password|pesan (opsional)."
         );
 
       for (let i = 0; i < credentials.length; i += chunkSize) {
@@ -1586,7 +1595,7 @@ bot.on("document", async (ctx) => {
       const response = await axios.get(fileLink.href);
       const fileContent = response.data; // Isi notepad
 
-      // 4. Parsing isi notepad (asumsi isi: email|pass|2fa per baris atau email:pass:2fa)
+      // 4. Parsing isi notepad (asumsi isi: email|pass|pesan per baris atau email:pass:pesan)
       const entries = fileContent
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -1601,7 +1610,7 @@ bot.on("document", async (ctx) => {
         .filter(Boolean);
 
       if (entries.length === 0) {
-        return ctx.reply("❌ Isi file notepad kosong atau format salah. Pastikan isi perbaris: `email|password` atau `email|password|2fa`.");
+        return ctx.reply("❌ Isi file notepad kosong atau format salah. Pastikan isi perbaris: `email|password` atau `email|password|pesan`.");
       }
 
       // 5. Gunakan Logic yang sama dengan /addstok teks
@@ -3357,7 +3366,7 @@ bot.command("kirim", async (ctx) => {
       const pass  = it.password ?? it.pass ?? it.pw  ?? "-";
       const extra =
         it.twofa ?? it.otp ?? it.note ?? it.extra ?? it.message ?? "";
-      const extraText = extra ? ` | 2FA/Pesan: ${extra}` : "";
+      const extraText = extra ? ` | Pesan: ${extra}` : "";
       return `${idx + 1}. ${email}:${pass}${extraText}`;
     });
 
@@ -3834,7 +3843,7 @@ bot.on("callback_query", async (ctx, next) => {
           akunListText = t.akun
             .map((a, i) => {
               const extra = a.twofa || a.otp || a.note || a.extra || a.message || "";
-              const extraLine = extra ? `\n2FA/Pesan: <code>${extra}</code>` : "";
+              const extraLine = extra ? `\nPesan: <code>${extra}</code>` : "";
               return (
                 `🔹 <b>Akun ${i + 1}</b>\n` +
                 `Email: <code>${a.email || "-"}</code>\n` +
@@ -3846,7 +3855,7 @@ bot.on("callback_query", async (ctx, next) => {
         } else if (t.email && t.password) {
           const extra = t.twofa || t.otp || t.note || t.extra || t.message || "";
           akunListText = `Email: <code>${t.email}</code>\nPassword: <code>${t.password}</code>` +
-            (extra ? `\n2FA/Pesan: <code>${extra}</code>` : "");
+            (extra ? `\nPesan: <code>${extra}</code>` : "");
         } else {
           akunListText = "❌ Tidak ada akun tercatat";
         }
@@ -4682,7 +4691,7 @@ if (data.startsWith("confirm_pay_")) {
         // Format tampilan akun banyak
         akunText = akunDataList
           .map((a, i) => {
-            const extraLine = a.twofa ? `\n2FA/Pesan: <code>${a.twofa}</code>` : "";
+            const extraLine = a.twofa ? `\nPesan: <code>${a.twofa}</code>` : "";
             return (
               `🔹 <b>Akun ${i + 1}</b>\n` +
               `Email: <code>${a.email}</code>\n` +
@@ -4900,7 +4909,7 @@ if (data.startsWith("cancel_pay_")) {
   '🛑 Pesanan kamu berhasil dibatalkan. 🛑',
 ].join('\n');
 
-    const canceledPhotoPath = path.resolve(__dirname, 'assets', 'canceled.jpg');
+    const canceledPhotoPath = CANCELED_BANNER_PATH;
 
     try {
       await ctx.replyWithPhoto({ source: canceledPhotoPath }, { caption: cap, parse_mode: 'HTML' });
@@ -5378,23 +5387,23 @@ bot.action("help_addstok", async (ctx) => {
       `📥 <b>MENU ADD STOCK</b>`,
       `━━━━━━━━━━━━━━━━━━━━`,
       `🔹 <b>Format Cepat</b>:`,
-      `<code>/addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)</code>`,
+      `<code>/addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)</code>`,
       ``,
       `🔹 <b>Multi-line (lebih rapi)</b>:`,
       `<code>/addstok code|varian|email|pass|catatan</code>`,
       `<code>code|varian|email2|pass2|catatan2</code>`,
       ``,
-      `🔹 <b>Tanpa 2FA</b>:`,
+      `🔹 <b>Tanpa Pesan</b>:`,
       `<code>/addstok code|varian|email|pass|email|pass</code>`,
       ``,
       `🔹 <b>Gunakan "-" jika kosong</b>:`,
-      `<code>/addstok code|varian|email|pass|-|email|pass|2fa</code>`,
+      `<code>/addstok code|varian|email|pass|-|email|pass|pesan</code>`,
       ``,
       `🔹 <b>Import TXT</b>:`,
       `Upload .txt dengan caption: <code>/addstok code|varian</code>`,
-      `Isi file per baris: <code>email|password</code> atau <code>email|password|2fa</code>`,
+      `Isi file per baris: <code>email|password</code> atau <code>email|password|pesan</code>`,
       ``,
-      `📝 <i>Kolom 2FA dapat diisi OTP/backup/notes lain.</i>`
+      `📝 <i>Kolom pesan bisa diisi OTP/backup/notes lain.</i>`
     ].join("\n");
 
     const keyboard = Markup.inlineKeyboard([
@@ -5626,7 +5635,7 @@ bot.command('riwayat', async (ctx) => {
           akunLines.push(
             ...t.akun.map((a,i) => {
               const extra = a.twofa || a.otp || a.note || a.extra || a.message || "";
-              const extraLine = extra ? `\n├     2FA/Pesan: <code>${escAdm(extra)}</code>` : "";
+              const extraLine = extra ? `\n├     Pesan: <code>${escAdm(extra)}</code>` : "";
               return (
                 `├ 🔹 <b>Akun ${i+1}</b>\n├     Email: <code>${escAdm(a.email||'-')}</code>\n├     Password: <code>${escAdm(a.password||'-')}</code>${extraLine}`
               );
@@ -5637,7 +5646,7 @@ bot.command('riwayat', async (ctx) => {
           akunLines.push('├ 📦 <b>Akun</b>:');
           akunLines.push(`├     Email: <code>${escAdm(t.email||'-')}</code>`);
           akunLines.push(`├     Password: <code>${escAdm(t.password||'-')}</code>`);
-          if (extra) akunLines.push(`├     2FA/Pesan: <code>${escAdm(extra)}</code>`);
+          if (extra) akunLines.push(`├     Pesan: <code>${escAdm(extra)}</code>`);
         }
 
         // BOX ASCII
