@@ -2,7 +2,11 @@
 const path = require("path");
 const { createCanvas, loadImage } = require("canvas");
 
-const FRAME_PATH = path.join(__dirname, "..", "assets", "qrisFrame.png");
+const FRAME_PATH = (() => {
+  const raw = String(process.env.QRIS_FRAME_PATH || "").trim();
+  if (raw) return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+  return path.join(__dirname, "..", "assets", "qrisFrame.png");
+})();
 
 // Ukuran frame & slot QR (yang kemarin udah pas)
 const FRAME_WIDTH = 1080;

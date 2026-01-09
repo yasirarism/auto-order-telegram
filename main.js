@@ -48,6 +48,15 @@ const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
 
+const resolveAssetPath = (envKey, fallbackRel) => {
+  const raw = String(process.env[envKey] || "").trim();
+  if (raw) return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+  return path.resolve(__dirname, fallbackRel);
+};
+
+const INFO_BANNER_PATH = resolveAssetPath("INFO_BANNER_PATH", "assets/info.jpg");
+const CANCELED_BANNER_PATH = resolveAssetPath("CANCELED_BANNER_PATH", "assets/canceled.jpg");
+
 // Label zona untuk tampilan (WIB/WITA/WIT) + fallback ke UTC±offset untuk zona lain
 const tzLabel = (zone = APP_TZ) => {
   if (zone === "Asia/Jakarta")  return "WIB";   // UTC+7
@@ -594,7 +603,7 @@ bot.start(async (ctx) => {
     ['❓ Cara Order']
   ]).resize();
 
-  const bannerPath = path.resolve(__dirname, 'assets/info.jpg');
+    const bannerPath = INFO_BANNER_PATH;
   const caption = `🤖 ${BOT_NAME} — by ${AUTHOR}\n\n${text}`;
 
   // 🖼️ Kirim banner cuma kalau ada, biar cepat
@@ -647,7 +656,7 @@ bot.hears('🧾 List Produk', async (ctx) => {
 
   try { await ctx.deleteMessage(loadingMsg.message_id); } catch { }
 
-  const bannerPath = path.resolve(__dirname, 'assets/info.jpg');
+  const bannerPath = INFO_BANNER_PATH;
 
   // 🔄 AUTO LOAD PRODUK DARI DATABASE
   let PRODUCTS = [];
@@ -1349,22 +1358,75 @@ bot.command("addstok", async (ctx) => {
     const args = ctx.message.text.split(" ").slice(1).join(" ");
     if (!args.includes("|"))
       return ctx.reply(
-        "⚙️ Format salah!\nGunakan format:\n/addstok code|varian|email1|pass1|email2|pass2|..."
+        "⚙️ Format salah!\nGunakan format:\n/addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)|..."
       );
 
-    // 🧩 FIX: hapus elemen kosong (| di ujung) biar gak error
-    const parts = args.split("|").map((x) => x.trim()).filter(Boolean);
-    const code = parts[0];
-    const inputVarian = parts[1];
-    const credentials = parts.slice(2);
+    const rawLines = args
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const isMultiline = rawLines.length > 1;
 
-    if (!code || !inputVarian || credentials.length < 2)
-      return ctx.reply(
-        "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email1|pass1|email2|pass2|..."
-      );
+    const parseLineParts = (line) => {
+      const parts = line.split("|").map((x) => x.trim());
+      while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+      return parts;
+    };
 
-    if (credentials.length % 2 !== 0)
-      return ctx.reply("⚠️ Jumlah email & password tidak seimbang!");
+    let code = null;
+    let inputVarian = null;
+    let entries = [];
+
+    if (isMultiline) {
+      for (let idx = 0; idx < rawLines.length; idx++) {
+        const parts = parseLineParts(rawLines[idx]);
+        if (parts.length >= 4) {
+          if (!code) code = parts[0];
+          if (!inputVarian) inputVarian = parts[1];
+          entries.push({
+            email: parts[2],
+            password: parts[3],
+            extra: parts[4] || "",
+          });
+        } else if (parts.length >= 2 && code && inputVarian) {
+          entries.push({
+            email: parts[0],
+            password: parts[1],
+            extra: parts[2] || "",
+          });
+        } else {
+          return ctx.reply(
+            "⚠️ Format salah!\nGunakan tiap baris:\ncode|varian|email|pass|pesan(optional)\natau\nemail|pass|pesan(optional) (pakai kode & varian dari baris pertama)."
+          );
+        }
+      }
+    } else {
+      const parts = parseLineParts(args);
+      code = parts[0];
+      inputVarian = parts[1];
+      const credentials = parts.slice(2);
+
+      if (!code || !inputVarian || credentials.length < 2)
+        return ctx.reply(
+          "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)|..."
+        );
+
+      let chunkSize = null;
+      if (credentials.length % 3 === 0) chunkSize = 3;
+      else if (credentials.length % 2 === 0) chunkSize = 2;
+      if (!chunkSize)
+        return ctx.reply(
+          "⚠️ Format stok tidak valid!\nGunakan pasangan email|password atau email|password|pesan (opsional)."
+        );
+
+      for (let i = 0; i < credentials.length; i += chunkSize) {
+        entries.push({
+          email: credentials[i],
+          password: credentials[i + 1],
+          extra: chunkSize === 3 ? credentials[i + 2] : "",
+        });
+      }
+    }
 
     // === Path file ===
     const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
@@ -1406,9 +1468,16 @@ bot.command("addstok", async (ctx) => {
     let addedEntries = [];
     let duplicateEntries = [];
 
-    for (let i = 0; i < credentials.length; i += 2) {
-      const email = credentials[i];
-      const password = credentials[i + 1];
+    const formatEntry = (idx, email, password, extra) => {
+      const extraText = extra ? ` | ${extra}` : "";
+      return `${idx}. ${email} | ${password}${extraText}`;
+    };
+
+    for (const entry of entries) {
+      const email = entry.email;
+      const password = entry.password;
+      const extraRaw = entry.extra || "";
+      const extra = extraRaw && extraRaw !== "-" ? extraRaw : "";
       if (!email || !password) continue;
 
       const duplicate = stokList.find(
@@ -1416,7 +1485,7 @@ bot.command("addstok", async (ctx) => {
       );
       if (duplicate) {
         skippedCount++;
-        duplicateEntries.push(`❌ ${skippedCount}. ${email} | ${password}`);
+        duplicateEntries.push(`❌ ${formatEntry(skippedCount, email, password, extra)}`);
         continue;
       }
 
@@ -1426,12 +1495,13 @@ bot.command("addstok", async (ctx) => {
         varian: realVarianName,
         email,
         password,
+        twofa: extra,
         addedAt: new Date().toISOString(),
       };
 
       stokList.push(newEntry);
       addedCount++;
-      addedEntries.push(`🆕 ${addedCount}. ${email} | ${password}`);
+      addedEntries.push(`🆕 ${formatEntry(addedCount, email, password, extra)}`);
     }
 
     // Simpan stok baru
@@ -1525,19 +1595,22 @@ bot.on("document", async (ctx) => {
       const response = await axios.get(fileLink.href);
       const fileContent = response.data; // Isi notepad
 
-      // 4. Parsing isi notepad (asumsi isi: email|pass per baris atau email:pass)
-      // Kita bersihkan baris kosong dan pecah menjadi array credentials
-      const credentials = fileContent
+      // 4. Parsing isi notepad (asumsi isi: email|pass|pesan per baris atau email:pass:pesan)
+      const entries = fileContent
         .split(/\r?\n/)
         .map(line => line.trim())
-        .filter(line => line.includes("|") || line.includes(":"))
-        .map(line => line.replace(":", "|")) // seragamkan pemisah ke "|"
-        .join("|")
-        .split("|")
-        .map(x => x.trim());
+        .filter(line => line.length > 0)
+        .map((line) => {
+          const parts = line.split(/[|:]/).map(part => part.trim()).filter(Boolean);
+          if (parts.length < 2) return null;
+          const [email, password, ...rest] = parts;
+          const extra = rest.join("|").trim();
+          return { email, password, twofa: extra };
+        })
+        .filter(Boolean);
 
-      if (credentials.length < 2) {
-        return ctx.reply("❌ Isi file notepad kosong atau format salah. Pastikan isi perbaris: `email|password` atau `email:password`.");
+      if (entries.length === 0) {
+        return ctx.reply("❌ Isi file notepad kosong atau format salah. Pastikan isi perbaris: `email|password` atau `email|password|pesan`.");
       }
 
       // 5. Gunakan Logic yang sama dengan /addstok teks
@@ -1557,9 +1630,10 @@ bot.on("document", async (ctx) => {
       let addedCount = 0;
       let skippedCount = 0;
 
-      for (let i = 0; i < credentials.length; i += 2) {
-        const email = credentials[i];
-        const password = credentials[i + 1];
+      for (const entry of entries) {
+        const email = entry.email;
+        const password = entry.password;
+        const extra = entry.twofa || "";
         if (!email || !password) continue;
 
         if (stokList.find(s => s.email.toLowerCase() === email.toLowerCase())) {
@@ -1573,6 +1647,7 @@ bot.on("document", async (ctx) => {
           varian: targetVarian.name,
           email,
           password,
+          twofa: extra,
           addedAt: new Date().toISOString()
         });
         addedCount++;
@@ -3289,7 +3364,10 @@ bot.command("kirim", async (ctx) => {
     const credsLines = picked.map((it, idx) => {
       const email = it.email ?? it.user ?? it.uid ?? "-";
       const pass  = it.password ?? it.pass ?? it.pw  ?? "-";
-      return `${idx + 1}. ${email}:${pass}`;
+      const extra =
+        it.twofa ?? it.otp ?? it.note ?? it.extra ?? it.message ?? "";
+      const extraText = extra ? ` | Pesan: ${extra}` : "";
+      return `${idx + 1}. ${email}:${pass}${extraText}`;
     });
 
     // Box ringkas DETAIL ORDER
@@ -3763,15 +3841,21 @@ bot.on("callback_query", async (ctx, next) => {
 
         if (Array.isArray(t.akun) && t.akun.length > 0) {
           akunListText = t.akun
-            .map(
-              (a, i) =>
+            .map((a, i) => {
+              const extra = a.twofa || a.otp || a.note || a.extra || a.message || "";
+              const extraLine = extra ? `\nPesan: <code>${extra}</code>` : "";
+              return (
                 `🔹 <b>Akun ${i + 1}</b>\n` +
                 `Email: <code>${a.email || "-"}</code>\n` +
-                `Password: <code>${a.password || "-"}</code>`
-            )
+                `Password: <code>${a.password || "-"}</code>` +
+                extraLine
+              );
+            })
             .join("\n\n");
         } else if (t.email && t.password) {
-          akunListText = `Email: <code>${t.email}</code>\nPassword: <code>${t.password}</code>`;
+          const extra = t.twofa || t.otp || t.note || t.extra || t.message || "";
+          akunListText = `Email: <code>${t.email}</code>\nPassword: <code>${t.password}</code>` +
+            (extra ? `\nPesan: <code>${extra}</code>` : "");
         } else {
           akunListText = "❌ Tidak ada akun tercatat";
         }
@@ -4601,16 +4685,20 @@ if (data.startsWith("confirm_pay_")) {
         akunDataList = stokFiltered.slice(0, jumlah).map((a) => ({
           email: a.email || "-",
           password: a.password || "-",
+          twofa: a.twofa || a.otp || a.note || a.extra || a.message || "",
         }));
 
         // Format tampilan akun banyak
         akunText = akunDataList
-          .map(
-            (a, i) =>
+          .map((a, i) => {
+            const extraLine = a.twofa ? `\nPesan: <code>${a.twofa}</code>` : "";
+            return (
               `🔹 <b>Akun ${i + 1}</b>\n` +
               `Email: <code>${a.email}</code>\n` +
-              `Password: <code>${a.password}</code>`
-          )
+              `Password: <code>${a.password}</code>` +
+              extraLine
+            );
+          })
           .join("\n\n");
 
         // Hapus akun yang sudah dikirim dari stok file
@@ -4821,7 +4909,7 @@ if (data.startsWith("cancel_pay_")) {
   '🛑 Pesanan kamu berhasil dibatalkan. 🛑',
 ].join('\n');
 
-    const canceledPhotoPath = path.resolve(__dirname, 'assets', 'canceled.jpg');
+    const canceledPhotoPath = CANCELED_BANNER_PATH;
 
     try {
       await ctx.replyWithPhoto({ source: canceledPhotoPath }, { caption: cap, parse_mode: 'HTML' });
@@ -5216,7 +5304,8 @@ bot.command("helpadmin", async (ctx) => {
       [
         Markup.button.callback("🧾 Transaksi", "help_trx"),
         Markup.button.callback("⚙️ Sistem", "help_sys")
-      ]
+      ],
+      [Markup.button.callback("➕ Add Stock", "help_addstok")]
     ]);
 
     await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
@@ -5273,9 +5362,11 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
       ].join("\n");
     }
 
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("⬅️ Kembali", "help_back")]
-    ]);
+    const keyboardRows = [[Markup.button.callback("⬅️ Kembali", "help_back")]];
+    if (category === "stok") {
+      keyboardRows.unshift([Markup.button.callback("➕ Menu Add Stock", "help_addstok")]);
+    }
+    const keyboard = Markup.inlineKeyboard(keyboardRows);
 
     await ctx.editMessageText(categoryText + "\n\n━━━━━━━━━━━━━━━━━━━━", {
       parse_mode: "HTML",
@@ -5284,6 +5375,45 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
     await ctx.answerCbQuery();
   } catch (err) {
     console.error("❌ Error handler kategori: ", err);
+  }
+});
+
+// === MENU ADD STOCK (ADMIN) ===
+bot.action("help_addstok", async (ctx) => {
+  try {
+    if (!isAdminNow(ctx)) return ctx.answerCbQuery("🚫 Akses Ditolak!");
+
+    const text = [
+      `📥 <b>MENU ADD STOCK</b>`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🔹 <b>Format Cepat</b>:`,
+      `<code>/addstok code|varian|email|pass|pesan(optional)|email|pass|pesan(optional)</code>`,
+      ``,
+      `🔹 <b>Multi-line (lebih rapi)</b>:`,
+      `<code>/addstok code|varian|email|pass|catatan</code>`,
+      `<code>code|varian|email2|pass2|catatan2</code>`,
+      ``,
+      `🔹 <b>Tanpa Pesan</b>:`,
+      `<code>/addstok code|varian|email|pass|email|pass</code>`,
+      ``,
+      `🔹 <b>Gunakan "-" jika kosong</b>:`,
+      `<code>/addstok code|varian|email|pass|-|email|pass|pesan</code>`,
+      ``,
+      `🔹 <b>Import TXT</b>:`,
+      `Upload .txt dengan caption: <code>/addstok code|varian</code>`,
+      `Isi file per baris: <code>email|password</code> atau <code>email|password|pesan</code>`,
+      ``,
+      `📝 <i>Kolom pesan bisa diisi OTP/backup/notes lain.</i>`
+    ].join("\n");
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback("⬅️ Kembali ke Stok", "help_stok")]
+    ]);
+
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
+    await ctx.answerCbQuery();
+  } catch (err) {
+    console.error("❌ Error help_addstok:", err);
   }
 });
 
@@ -5300,7 +5430,8 @@ bot.action("help_back", async (ctx) => {
     
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback("📦 Produk", "help_produk"), Markup.button.callback("📥 Stok", "help_stok")],
-      [Markup.button.callback("🧾 Transaksi", "help_trx"), Markup.button.callback("⚙️ Sistem", "help_sys")]
+      [Markup.button.callback("🧾 Transaksi", "help_trx"), Markup.button.callback("⚙️ Sistem", "help_sys")],
+      [Markup.button.callback("➕ Add Stock", "help_addstok")]
     ]);
 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
@@ -5502,14 +5633,20 @@ bot.command('riwayat', async (ctx) => {
         if (Array.isArray(t.akun) && t.akun.length > 0) {
           akunLines.push('├ 📦 <b>Akun</b>:');
           akunLines.push(
-            ...t.akun.map((a,i) =>
-              `├ 🔹 <b>Akun ${i+1}</b>\n├     Email: <code>${escAdm(a.email||'-')}</code>\n├     Password: <code>${escAdm(a.password||'-')}</code>`
-            )
+            ...t.akun.map((a,i) => {
+              const extra = a.twofa || a.otp || a.note || a.extra || a.message || "";
+              const extraLine = extra ? `\n├     Pesan: <code>${escAdm(extra)}</code>` : "";
+              return (
+                `├ 🔹 <b>Akun ${i+1}</b>\n├     Email: <code>${escAdm(a.email||'-')}</code>\n├     Password: <code>${escAdm(a.password||'-')}</code>${extraLine}`
+              );
+            })
           );
         } else if (t.email || t.password) {
+          const extra = t.twofa || t.otp || t.note || t.extra || t.message || "";
           akunLines.push('├ 📦 <b>Akun</b>:');
           akunLines.push(`├     Email: <code>${escAdm(t.email||'-')}</code>`);
           akunLines.push(`├     Password: <code>${escAdm(t.password||'-')}</code>`);
+          if (extra) akunLines.push(`├     Pesan: <code>${escAdm(extra)}</code>`);
         }
 
         // BOX ASCII
