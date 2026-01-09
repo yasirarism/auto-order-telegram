@@ -1352,25 +1352,72 @@ bot.command("addstok", async (ctx) => {
         "⚙️ Format salah!\nGunakan format:\n/addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)|..."
       );
 
-    // 🧩 FIX: hapus elemen kosong di belakang (| di ujung) biar gak error
-    const parts = args.split("|").map((x) => x.trim());
-    while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
-    const code = parts[0];
-    const inputVarian = parts[1];
-    const credentials = parts.slice(2);
+    const rawLines = args
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const isMultiline = rawLines.length > 1;
 
-    if (!code || !inputVarian || credentials.length < 2)
-      return ctx.reply(
-        "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)|..."
-      );
+    const parseLineParts = (line) => {
+      const parts = line.split("|").map((x) => x.trim());
+      while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+      return parts;
+    };
 
-    let chunkSize = null;
-    if (credentials.length % 3 === 0) chunkSize = 3;
-    else if (credentials.length % 2 === 0) chunkSize = 2;
-    if (!chunkSize)
-      return ctx.reply(
-        "⚠️ Format stok tidak valid!\nGunakan pasangan email|password atau email|password|2FA/Pesan (opsional)."
-      );
+    let code = null;
+    let inputVarian = null;
+    let entries = [];
+
+    if (isMultiline) {
+      for (let idx = 0; idx < rawLines.length; idx++) {
+        const parts = parseLineParts(rawLines[idx]);
+        if (parts.length >= 4) {
+          if (!code) code = parts[0];
+          if (!inputVarian) inputVarian = parts[1];
+          entries.push({
+            email: parts[2],
+            password: parts[3],
+            extra: parts[4] || "",
+          });
+        } else if (parts.length >= 2 && code && inputVarian) {
+          entries.push({
+            email: parts[0],
+            password: parts[1],
+            extra: parts[2] || "",
+          });
+        } else {
+          return ctx.reply(
+            "⚠️ Format salah!\nGunakan tiap baris:\ncode|varian|email|pass|2fa(optional)\natau\nemail|pass|2fa(optional) (pakai kode & varian dari baris pertama)."
+          );
+        }
+      }
+    } else {
+      const parts = parseLineParts(args);
+      code = parts[0];
+      inputVarian = parts[1];
+      const credentials = parts.slice(2);
+
+      if (!code || !inputVarian || credentials.length < 2)
+        return ctx.reply(
+          "⚠️ Format kurang lengkap!\nGunakan: /addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)|..."
+        );
+
+      let chunkSize = null;
+      if (credentials.length % 3 === 0) chunkSize = 3;
+      else if (credentials.length % 2 === 0) chunkSize = 2;
+      if (!chunkSize)
+        return ctx.reply(
+          "⚠️ Format stok tidak valid!\nGunakan pasangan email|password atau email|password|2FA/Pesan (opsional)."
+        );
+
+      for (let i = 0; i < credentials.length; i += chunkSize) {
+        entries.push({
+          email: credentials[i],
+          password: credentials[i + 1],
+          extra: chunkSize === 3 ? credentials[i + 2] : "",
+        });
+      }
+    }
 
     // === Path file ===
     const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
@@ -1417,10 +1464,10 @@ bot.command("addstok", async (ctx) => {
       return `${idx}. ${email} | ${password}${extraText}`;
     };
 
-    for (let i = 0; i < credentials.length; i += chunkSize) {
-      const email = credentials[i];
-      const password = credentials[i + 1];
-      const extraRaw = chunkSize === 3 ? credentials[i + 2] : "";
+    for (const entry of entries) {
+      const email = entry.email;
+      const password = entry.password;
+      const extraRaw = entry.extra || "";
       const extra = extraRaw && extraRaw !== "-" ? extraRaw : "";
       if (!email || !password) continue;
 
@@ -5332,6 +5379,10 @@ bot.action("help_addstok", async (ctx) => {
       `━━━━━━━━━━━━━━━━━━━━`,
       `🔹 <b>Format Cepat</b>:`,
       `<code>/addstok code|varian|email|pass|2fa(optional)|email|pass|2fa(optional)</code>`,
+      ``,
+      `🔹 <b>Multi-line (lebih rapi)</b>:`,
+      `<code>/addstok code|varian|email|pass|catatan</code>`,
+      `<code>code|varian|email2|pass2|catatan2</code>`,
       ``,
       `🔹 <b>Tanpa 2FA</b>:`,
       `<code>/addstok code|varian|email|pass|email|pass</code>`,
