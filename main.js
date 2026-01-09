@@ -5181,14 +5181,30 @@ bot.action(/^paid_qris_(\d+)$/, async (ctx) => {
     }
 
     // === KIRIM QR + TOMBOL BATAL ===
-    const createTx = await trx.create(
-      chatId,
-      user.username,
-      product.id,
-      variant.name,
-      total,
-      jumlah
-    );
+    let createTx;
+    try {
+      createTx = await trx.create(
+        chatId,
+        user.username,
+        product.id,
+        variant.name,
+        total,
+        jumlah
+      );
+    } catch (err) {
+      logger.error("Gagal membuat transaksi QRIS:", err);
+      const failCaption = "⚠️ <b>Gagal membuat QRIS. Coba lagi beberapa saat.</b>";
+      try {
+        await ctx.editMessageCaption(failCaption, { parse_mode: "HTML" });
+      } catch {
+        try {
+          await ctx.editMessageText(failCaption, { parse_mode: "HTML" });
+        } catch (err2) {
+          logger.error("Gagal update pesan error QRIS:", err2);
+        }
+      }
+      return;
+    }
 
     const waitingText = [
       `⌛ <b>Silahkan Scan QRIS Diatas ⌛</b>`,
