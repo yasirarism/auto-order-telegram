@@ -22,13 +22,15 @@ const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
 require("dotenv").config();
 const fs = require("fs");
-const fsp = require("fs/promises");
 const path = require("path");
 const axios = require("axios");
 const FormData = require("form-data");
 const Transactions = require("./lib/transactions");
 const txHandler = new Transactions();
 const Database = require("./lib/database");
+const store = require("./lib/mongo-store");
+const { getDb } = require("./lib/mongo");
+const { createSessionStore } = require("./lib/mongo-session-store");
 const tx = new Database("data/transactions.json");
 const logger = require("./utils/logger");
 const settingsPath = path.resolve('settings.js');
@@ -39,6 +41,9 @@ const ValidateTransactions = require("./lib/handler/transactions");
 dayjs.extend(utc);
 dayjs.extend(tz);
 dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
+
+const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
+const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
 
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
@@ -111,16 +116,11 @@ function isAdminNow(ctx) {
 const productPath = path.join(__dirname, "data", "products.json");
 
 async function loadProducts() {
-  try {
-    const data = await fs.readFile(productPath, "utf8");
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
+  return readJson(productPath, []);
 }
 
 async function saveProducts(products) {
-  await fs.writeFile(productPath, JSON.stringify(products, null, 2));
+  await writeJson(productPath, products);
 }
 
 // 🧩 tambahkan 'session' biar ctx.session berfungsi
@@ -152,15 +152,39 @@ function saldoLabel(balance = 0) {
 const DB_PATH = path.resolve(__dirname, "data/db.json");
 const PRODUCTS_PATH = path.resolve(__dirname, "data/products.json"); // ← kita pakai ini
 
+async function readJson(pathKey, fallback) {
+  return store.readJson(pathKey, fallback);
+}
+
+async function writeJson(pathKey, value) {
+  await store.writeJson(pathKey, value);
+}
+
+async function existsJson(pathKey) {
+  return store.exists(pathKey);
+}
+
+async function deleteJson(pathKey) {
+  await store.deleteJson(pathKey);
+}
+
+async function listJsonDir(dirPath) {
+  return store.listDir(dirPath);
+}
+
+async function readStockFile(stockPath) {
+  const data = await readJson(stockPath, []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function writeStockFile(stockPath, data) {
+  await writeJson(stockPath, data);
+}
+
 // === 🧩 PRODUK (load & save) — PAKAI products.json ===
 async function loadProducts() {
   try {
-    if (!fs.existsSync(PRODUCTS_PATH)) {
-      await fsp.writeFile(PRODUCTS_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(PRODUCTS_PATH, "utf8");
-    const data = JSON.parse(txt);
+    const data = await readJson(PRODUCTS_PATH, []);
     return Array.isArray(data) ? data : [];
   } catch (e) {
     console.error("⚠️ Gagal baca products.json:", e.message);
@@ -169,7 +193,7 @@ async function loadProducts() {
 }
 async function saveProducts(products) {
   try {
-    await fsp.writeFile(PRODUCTS_PATH, JSON.stringify(products, null, 2), "utf8");
+    await writeJson(PRODUCTS_PATH, products);
   } catch (e) {
     console.error("⚠️ Gagal simpan products.json:", e.message);
   }
@@ -178,13 +202,9 @@ async function saveProducts(products) {
 // === 🗄️ DATABASE (db.json) ===
 async function loadDB() {
   try {
-    if (!fs.existsSync(DB_PATH)) {
-      const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
-      await saveDB(init);
-      return init;
-    }
-    const txt = await fsp.readFile(DB_PATH, "utf8");
-    return JSON.parse(txt);
+    const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
+    const data = await readJson(DB_PATH, init);
+    return data || init;
   } catch {
     const init = { users: {}, stats: { totalUsers: 0, totalSold: 0, totalTransaksi: 0 } };
     await saveDB(init);
@@ -192,21 +212,15 @@ async function loadDB() {
   }
 }
 async function saveDB(db) {
-  await fsp.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+  await writeJson(DB_PATH, db);
 }
 
 // === 💳 TRANSAKSI (transactions.json) ===
 async function loadTransactions() {
   try {
-    if (!fs.existsSync(TX_PATH)) {
-      await fsp.writeFile(TX_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(TX_PATH, "utf8");
-    const data = JSON.parse(txt);
+    const data = await readJson(TX_PATH, []);
     return Array.isArray(data) ? data : [];
   } catch {
-    await fsp.writeFile(TX_PATH, "[]", "utf8");
     return [];
   }
 }
@@ -286,59 +300,19 @@ CornService.register('warn_expiry', '*/10 * * * * *', async () => {
 });
 
 (async () => {
-  // === 💾 Session store ke file biar persist & aman (LowDB v7+) ===
-  const { Low } = require("lowdb");
-  const { JSONFile } = require("lowdb/node");
+  // === 💾 Session store ke MongoDB biar persist & aman ===
   let activeMessages = [];
-
-  const SESSION_PATH = path.resolve(__dirname, "data/session.json");
-
-  if (!fs.existsSync(path.resolve(__dirname, "data"))) {
-    fs.mkdirSync(path.resolve(__dirname, "data"));
-  }
-
-  let sessionDB;
-  try {
-    sessionDB = new Low(new JSONFile(SESSION_PATH), {});
-    await sessionDB.read();
-    if (!sessionDB.data || typeof sessionDB.data !== "object") {
-      console.warn("⚠️ Session file rusak, reset ulang...");
-      sessionDB.data = {};
-      await sessionDB.write();
-    }
-  } catch (err) {
-    console.error("⚠️ Gagal baca session.json, membuat baru:", err.message);
-    fs.writeFileSync(SESSION_PATH, "{}", "utf8");
-    sessionDB = new Low(new JSONFile(SESSION_PATH), {});
-    await sessionDB.read();
-    sessionDB.data ||= {};
-  }
-
-  const fileSession = () => ({
-    get: (key) => {
-      return sessionDB.data[key];
-    },
-    set: (key, value) => {
-      sessionDB.data[key] = value;
-      sessionDB.write(); // 🧠 penting: biar langsung tersimpan ke file
-      console.log("💾 Session disimpan:", key, value); // debug tambahan
-    },
-    delete: (key) => {
-      delete sessionDB.data[key];
-      sessionDB.write();
-      console.log("🧹 Session dihapus:", key);
-    },
-  });
+  const mongoSession = createSessionStore();
 
   // 🧠 Session fix: kunci berdasarkan from.id (biar inline button share context)
   bot.use(session({
-   store: fileSession(),
+    store: mongoSession,
     getSessionKey: (ctx) => {
-  const uid = ctx.from?.id || ctx.callbackQuery?.from?.id;
-  const cid = ctx.chat?.id || ctx.callbackQuery?.message?.chat?.id;
-  if (!uid || !cid) return null;
-  return `${uid}:${cid}`; // 🔥 biar key selalu sama di command & callback
-  },
+      const uid = ctx.from?.id || ctx.callbackQuery?.from?.id;
+      const cid = ctx.chat?.id || ctx.callbackQuery?.message?.chat?.id;
+      if (!uid || !cid) return null;
+      return `${uid}:${cid}`; // 🔥 biar key selalu sama di command & callback
+    },
   }));
 
   // 🧩 Debug session (sementara)
@@ -525,14 +499,11 @@ bot.start(async (ctx) => {
   // 🚀 Reload data dari file agar saldo tidak ke-reset oleh cache lama
   global.dbCache = await loadDB();
 
-  // 🧩 Perbaikan utama: selalu reload transactions.json biar realtime
-  const txPath = path.join(__dirname, "data", "transactions.json");
+  // 🧩 Perbaikan utama: selalu reload transaksi biar realtime
   try {
-    global.txCache = fs.existsSync(txPath)
-      ? JSON.parse(fs.readFileSync(txPath, "utf8"))
-      : [];
+    global.txCache = await loadTransactions();
   } catch (err) {
-    console.error("⚠️ Gagal baca transactions.json:", err.message);
+    console.error("⚠️ Gagal load transaksi:", err.message);
     global.txCache = [];
   }
 
@@ -678,16 +649,13 @@ bot.hears('🧾 List Produk', async (ctx) => {
 
   const bannerPath = path.resolve(__dirname, 'assets/info.jpg');
 
-  // 🔄 AUTO LOAD PRODUK DARI FILE /data/products.json
-  const productsFile = path.join(__dirname, 'data', 'products.json');
+  // 🔄 AUTO LOAD PRODUK DARI DATABASE
   let PRODUCTS = [];
-  if (fs.existsSync(productsFile)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(productsFile, 'utf8'));
-      PRODUCTS = data.map((p) => p.name.toUpperCase());
-    } catch (err) {
-      console.error("❌ Gagal membaca products.json:", err);
-    }
+  try {
+    const data = await loadProducts();
+    PRODUCTS = data.map((p) => p.name.toUpperCase());
+  } catch (err) {
+    console.error("❌ Gagal membaca products:", err);
   }
 
   const listText = [
@@ -696,7 +664,7 @@ bot.hears('🧾 List Produk', async (ctx) => {
     `━━━━━━━━━━━━━━━━━━━`,
     ...PRODUCTS.map((p, i) => `[${i + 1}] ${p}`),
     `━━━━━━━━━━━━━━━━━━━`,
-    `This bot is proudly created by\n© SEN PRO 2025`
+    `This bot is proudly created by\n© ${STORE_NICKNAME} 2025`
   ].join('\n');
 
 // 🧮 Generate keyboard dinamis sesuai jumlah produk
@@ -799,13 +767,7 @@ bot.hears(/^🛒 Stock/, async (ctx) => {
   try {
     await ctx.reply('📦 Menampilkan seluruh stok produk...');
 
-    const productsFile = path.join(__dirname, "data", "products.json");
-
-    if (!fs.existsSync(productsFile)) {
-      return ctx.reply("📭 File products.json belum ada atau kosong.");
-    }
-
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    const products = await loadProducts();
     if (!products.length) {
       return ctx.reply("📭 Belum ada produk yang terdaftar.");
     }
@@ -853,16 +815,10 @@ const TX_PATH = path.resolve("data/transactions.json");
 // Load transaksi
 async function loadTransactions() {
   try {
-    if (!fs.existsSync(TX_PATH)) {
-      await fsp.writeFile(TX_PATH, "[]", "utf8");
-      return [];
-    }
-    const txt = await fsp.readFile(TX_PATH, "utf8");
-    const data = JSON.parse(txt);
+    const data = await readJson(TX_PATH, []);
     return Array.isArray(data) ? data : [];
   } catch (err) {
     console.error("⚠️ Gagal load transactions.json:", err.message);
-    await fsp.writeFile(TX_PATH, "[]", "utf8");
     return [];
   }
 }
@@ -870,10 +826,7 @@ async function loadTransactions() {
 // Simpan transaksi
 async function saveTransactions(data) {
   try {
-    if (!fs.existsSync(path.dirname(TX_PATH))) {
-      fs.mkdirSync(path.dirname(TX_PATH), { recursive: true });
-    }
-    await fsp.writeFile(TX_PATH, JSON.stringify(data, null, 2), "utf8");
+    await writeJson(TX_PATH, data);
     console.log("✅ Transactions berhasil disimpan");
   } catch (err) {
     console.error("❌ Gagal simpan transactions.json:", err.message);
@@ -929,11 +882,7 @@ const statusBadge = (s) => {
 bot.hears('📜 Riwayat Transaksi', async (ctx) => {
   const chatId = String(ctx.chat.id);
 
-  if (!fs.existsSync(TX_PATH)) {
-    return ctx.reply('📭 Belum ada transaksi yang tercatat.');
-  }
-
-  const txAll = JSON.parse(fs.readFileSync(TX_PATH, 'utf8') || '[]');
+  const txAll = await loadTransactions();
   const userTx = (txAll || []).filter(t => String(t.user_id) === chatId);
 
   if (!userTx.length) {
@@ -941,9 +890,7 @@ bot.hears('📜 Riwayat Transaksi', async (ctx) => {
   }
 
   // load products buat resolve nama
-  const products = fs.existsSync(PRODUCTS_PATH)
-    ? (JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8') || '[]') || [])
-    : [];
+  const products = await loadProducts();
   const prodIndex = Object.fromEntries(products.map(p => [String(p.id), p]));
 
   const totalPages = Math.max(1, Math.ceil(userTx.length / PER_PAGE));
@@ -1034,21 +981,14 @@ bot.action(/^tx_page_(\d+)$/, async (ctx) => {
   // (copas kecil renderPage supaya tidak duplikasi banyak; atau taruh renderPage ke scope luar)
   const chatId = String(ctx.chat.id);
 
-  if (!fs.existsSync(TX_PATH)) {
-    try { await ctx.answerCbQuery('Tidak ada transaksi.'); } catch {}
-    return;
-  }
-
-  const txAll = JSON.parse(fs.readFileSync(TX_PATH, 'utf8') || '[]');
+  const txAll = await loadTransactions();
   const userTx = (txAll || []).filter(t => String(t.user_id) === chatId);
   if (!userTx.length) {
     try { await ctx.answerCbQuery('Tidak ada transaksi.'); } catch {}
     return;
   }
 
-  const products = fs.existsSync(PRODUCTS_PATH)
-    ? (JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8') || '[]') || [])
-    : [];
+  const products = await loadProducts();
   const prodIndex = Object.fromEntries(products.map(p => [String(p.id), p]));
   const totalPages = Math.max(1, Math.ceil(userTx.length / PER_PAGE));
   const p = Math.min(Math.max(1, nextPage), totalPages);
@@ -1193,18 +1133,10 @@ bot.command("addproduk", async (ctx) => {
     }
 
     // === Path file ===
-    const stokFolder = path.join(__dirname, "stok");
-    const stokFile = path.join(stokFolder, `${code.toLowerCase()}.json`);
-    const productsFile = path.join(__dirname, "data", "products.json");
-
-    if (!fs.existsSync(stokFolder))
-      fs.mkdirSync(stokFolder, { recursive: true });
+    const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
 
     // === Load produk yang sudah ada ===
-    let products = [];
-    if (fs.existsSync(productsFile)) {
-      products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
-    }
+    let products = await loadProducts();
 
     // === Cek duplikat berdasarkan code ===
     if (
@@ -1216,7 +1148,7 @@ bot.command("addproduk", async (ctx) => {
     }
 
     // === Buat file stok kosong jika belum ada ===
-    if (!fs.existsSync(stokFile)) fs.writeFileSync(stokFile, "[]", "utf8");
+    if (!(await existsJson(stokFile))) await writeStockFile(stokFile, []);
 
     // === Buat produk baru ===
     const newProduct = {
@@ -1236,7 +1168,7 @@ products.sort((a, b) =>
   String(a.name || "").localeCompare(String(b.name || ""), "id", { sensitivity: "base" })
 );
     products.forEach((p, i) => p.id = i + 1);
-    fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     // === Output “Premium Store” Look ===
     let replyText = [
@@ -1269,19 +1201,14 @@ bot.command("sortproduk", async (ctx) => {
     if (!isAdmin(ctx.from.id)) return ctx.reply("🚫 Kamu bukan admin.");
     if (!isAdminNow(ctx)) return ctx.reply("🚫 Kamu bukan admin.");
 
-    const fs = require("fs");
-    const path = require("path");
-    const file = path.join(__dirname, "data", "products.json");
-    if (!fs.existsSync(file)) return ctx.reply("❌ File products.json tidak ditemukan.");
-
-    const list = JSON.parse(fs.readFileSync(file, "utf8"));
+    const list = await loadProducts();
     if (!Array.isArray(list) || !list.length)
       return ctx.reply("⚠️ Daftar produk kosong.");
 
     list.sort((p, q) => String(p.name||"").localeCompare(String(q.name||""),
                       "id", { sensitivity: "base" }));
 
-    fs.writeFileSync(file, JSON.stringify(list, null, 2));
+    await saveProducts(list);
 
     await ctx.reply("✅ <b>Produk berhasil diurutkan (A→Z)</b>", { parse_mode: "HTML" });
 
@@ -1304,18 +1231,7 @@ bot.command("delproduk", async (ctx) => {
     return ctx.reply("⚠️ Format salah!\nGunakan: /delproduk <code>");
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
-  let products = [];
-  try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch (err) {
-    console.error("❌ Gagal membaca file:", err);
-    return ctx.reply("⚠️ Gagal membaca file data produk.");
-  }
+  const products = await loadProducts();
 
   const product = products.find(
     (p) => p.code && p.code.toLowerCase() === code.toLowerCase()
@@ -1362,8 +1278,7 @@ bot.action("confirm_delproduk_yes", async (ctx) => {
     const data = ctx.session?.deleteProduct;
     if (!data) return ctx.answerCbQuery("⚠️ Tidak ada produk yang tertunda untuk dihapus.");
 
-    const filePath = path.join(__dirname, "data", "products.json");
-    let products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    let products = await loadProducts();
 
     const index = products.findIndex(
       (p) => p.code && p.code.toLowerCase() === data.code.toLowerCase()
@@ -1376,19 +1291,19 @@ bot.action("confirm_delproduk_yes", async (ctx) => {
     products.splice(index, 1);
     // 🧹 reindex ID supaya berurutan sesuai posisi baru
     products.forEach((p, i) => { p.id = i + 1; });
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     // === 🧹 Sinkron hapus file stok ===
     const stokByCode = path.join(__dirname, "stok", `${deleted.code}.json`);
     const stokByName = path.join(__dirname, "stok", `${deleted.name}.json`);
 
     let stokDeleted = false;
-    if (fs.existsSync(stokByCode)) {
-      fs.unlinkSync(stokByCode);
+    if (await existsJson(stokByCode)) {
+      await deleteJson(stokByCode);
       stokDeleted = true;
       console.log(`🧹 File stok dihapus: ${stokByCode}`);
-    } else if (fs.existsSync(stokByName)) {
-      fs.unlinkSync(stokByName);
+    } else if (await existsJson(stokByName)) {
+      await deleteJson(stokByName);
       stokDeleted = true;
       console.log(`🧹 File stok dihapus: ${stokByName}`);
     } else {
@@ -1452,16 +1367,11 @@ bot.command("addstok", async (ctx) => {
       return ctx.reply("⚠️ Jumlah email & password tidak seimbang!");
 
     // === Path file ===
-    const stokFolder = path.join(__dirname, "stok");
-    const stokFile = path.join(stokFolder, `${code.toLowerCase()}.json`);
-    const productsFile = path.join(__dirname, "data", "products.json");
-
-    if (!fs.existsSync(stokFolder)) fs.mkdirSync(stokFolder, { recursive: true });
-    if (!fs.existsSync(productsFile))
-      return ctx.reply("⚠️ File products.json tidak ditemukan!");
+    const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
 
     // === Load produk ===
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    const products = await loadProducts();
+    if (!products.length) return ctx.reply("⚠️ Produk belum tersedia.");
     const product = products.find(
       (p) => p.code && p.code.toLowerCase() === code.toLowerCase()
     );
@@ -1481,8 +1391,7 @@ bot.command("addstok", async (ctx) => {
     const realVarianName = targetVarian.name;
 
     // === Load stok ===
-    if (!fs.existsSync(stokFile)) fs.writeFileSync(stokFile, "[]", "utf8");
-    const stokList = JSON.parse(fs.readFileSync(stokFile, "utf8"));
+    const stokList = await readStockFile(stokFile);
 
     // Ambil emailCount terakhir
     let lastCount = 0;
@@ -1526,14 +1435,14 @@ bot.command("addstok", async (ctx) => {
     }
 
     // Simpan stok baru
-    fs.writeFileSync(stokFile, JSON.stringify(stokList, null, 2));
+    await writeStockFile(stokFile, stokList);
 
     // === Update stok di products.json ===
     const totalForThisVarian = stokList.filter(
       (s) => s.varian && s.varian.toLowerCase() === realVarianName.toLowerCase()
     ).length;
     targetVarian.stock = totalForThisVarian;
-    fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     // === Output hasil ===
     let replyText = "";
@@ -1632,11 +1541,9 @@ bot.on("document", async (ctx) => {
       }
 
       // 5. Gunakan Logic yang sama dengan /addstok teks
-      const productsFile = path.join(__dirname, "data", "products.json");
-      const stokFolder = path.join(__dirname, "stok");
-      const stokFile = path.join(stokFolder, `${code.toLowerCase()}.json`);
+      const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
 
-      let products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+      let products = await loadProducts();
       const product = products.find(p => p.code?.toLowerCase() === code.toLowerCase());
 
       if (!product) return ctx.reply(`⚠️ Produk "${code}" tidak ditemukan.`);
@@ -1644,8 +1551,7 @@ bot.on("document", async (ctx) => {
       const targetVarian = product.variants.find(v => v.name.toLowerCase() === inputVarian.toLowerCase());
       if (!targetVarian) return ctx.reply(`⚠️ Varian "${inputVarian}" tidak ditemukan.`);
 
-      if (!fs.existsSync(stokFile)) fs.writeFileSync(stokFile, "[]", "utf8");
-      let stokList = JSON.parse(fs.readFileSync(stokFile, "utf8"));
+      let stokList = await readStockFile(stokFile);
 
       let lastCount = stokList.length > 0 ? parseInt(stokList[stokList.length - 1].emailCount || "0") : 0;
       let addedCount = 0;
@@ -1673,9 +1579,9 @@ bot.on("document", async (ctx) => {
       }
 
       // 6. Simpan Hasil
-      fs.writeFileSync(stokFile, JSON.stringify(stokList, null, 2));
+      await writeStockFile(stokFile, stokList);
       targetVarian.stock = stokList.filter(s => s.varian === targetVarian.name).length;
-      fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+      await saveProducts(products);
 
       await ctx.reply(
         `✅ <b>Berhasil Import dari Notepad!</b>\n\n` +
@@ -1711,18 +1617,13 @@ bot.command("delstok", async (ctx) => {
       return ctx.reply("⚠️ Format salah!\nGunakan: /delstok code|varian|jumlah");
 
     // === Path file (pakai root project) ===
-    const stokFolder   = path.join(process.cwd(), "stok");
-    const stokFile     = path.join(stokFolder, `${code.toLowerCase()}.json`);
-    const productsFile = path.join(process.cwd(), "data", "products.json");
+    const stokFile     = path.join(process.cwd(), "stok", `${code.toLowerCase()}.json`);
 
-    if (!fs.existsSync(stokFile))
+    if (!(await existsJson(stokFile)))
       return ctx.reply(`⚠️ File stok untuk kode "${code}" tidak ditemukan!`);
 
-    if (!fs.existsSync(productsFile))
-      return ctx.reply("⚠️ File products.json tidak ditemukan!");
-
-    // === Baca produk dari products.json ===
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    // === Baca produk dari database ===
+    const products = await loadProducts();
     const product = products.find(
       (p) => p.code && p.code.toLowerCase() === code.toLowerCase()
     );
@@ -1744,7 +1645,7 @@ bot.command("delstok", async (ctx) => {
     const varianName = targetVarian.name;
 
     // === Baca stok file ===
-    const stokList = JSON.parse(fs.readFileSync(stokFile, "utf8"));
+    const stokList = await readStockFile(stokFile);
     const stokVarian = stokList.filter(
       (s) => s.varian && s.varian.toLowerCase() === varianName.toLowerCase()
     );
@@ -1770,7 +1671,7 @@ bot.command("delstok", async (ctx) => {
       newStokList.push(item);
     }
 
-    fs.writeFileSync(stokFile, JSON.stringify(newStokList, null, 2));
+    await writeStockFile(stokFile, newStokList);
 
     // === Update stok di products.json ===
     const newVarianCount = newStokList.filter(
@@ -1778,7 +1679,7 @@ bot.command("delstok", async (ctx) => {
     ).length;
 
     targetVarian.stock = newVarianCount;
-    fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     // === Output premium-style ===
     const replyText = [
@@ -1817,15 +1718,10 @@ bot.command("editdesk", async (ctx) => {
     return ctx.reply("⚠️ Format tidak lengkap!\nContoh: /editdesk am|Garansi resmi 1 tahun dan support update");
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // Baca data produk
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -1847,10 +1743,10 @@ bot.command("editdesk", async (ctx) => {
 
   // Simpan perubahan ke file
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // Kirim konfirmasi ke admin
@@ -1884,15 +1780,10 @@ bot.command("addvar", async (ctx) => {
 
   const price = Number(priceInput) || 0;
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // Baca data produk
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -1931,10 +1822,10 @@ bot.command("addvar", async (ctx) => {
 
   // Simpan ke file
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menulis file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // Kirim konfirmasi
@@ -1967,14 +1858,9 @@ bot.command("editvar", async (ctx) => {
     return ctx.reply("⚠️ Format tidak lengkap!\nContoh: /editvar am|Android|Android Premium");
   }
 
-  const productPath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(productPath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(productPath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2008,29 +1894,29 @@ bot.command("editvar", async (ctx) => {
 
   // === Simpan perubahan di products.json
   try {
-    fs.writeFileSync(productPath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // === Sinkron ke file stok/<code>.json
   const stokPath = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
   let stokUpdated = 0;
-  let stokExists = fs.existsSync(stokPath);
+  let stokExists = await existsJson(stokPath);
 
   if (stokExists) {
     try {
-      const stokData = JSON.parse(fs.readFileSync(stokPath, "utf8"));
+      const stokData = await readStockFile(stokPath);
       stokData.forEach((item) => {
         if (item.varian && item.varian.toLowerCase() === oldVar.toLowerCase()) {
           item.varian = newVar;
           stokUpdated++;
         }
       });
-      fs.writeFileSync(stokPath, JSON.stringify(stokData, null, 2));
+      await writeStockFile(stokPath, stokData);
     } catch (err) {
-      console.error("⚠️ Gagal memperbarui file stok:", err);
+      console.error("⚠️ Gagal memperbarui data stok:", err);
       stokExists = false;
     }
   }
@@ -2085,15 +1971,10 @@ bot.command("delvar", async (ctx) => {
     return ctx.reply("⚠️ Format tidak lengkap!\nContoh: /delvar am|Android");
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // Baca data produk
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2134,10 +2015,10 @@ bot.command("delvar", async (ctx) => {
 
   // Simpan perubahan
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   ctx.reply(
@@ -2168,15 +2049,10 @@ bot.command("editnama", async (ctx) => {
   }
 
   // pakai root project
-  const filePath = path.join(process.cwd(), "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // Baca semua produk
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2197,10 +2073,10 @@ bot.command("editnama", async (ctx) => {
   product.name = newName;
 
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menulis file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menulis data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // ✅ Beri notifikasi sukses
@@ -2240,15 +2116,10 @@ bot.command("editharga", async (ctx) => {
     return ctx.reply("⚠️ Harga baru harus berupa angka positif!");
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // === Load data produk ===
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2280,10 +2151,10 @@ bot.command("editharga", async (ctx) => {
 
   // === Simpan perubahan
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // === Output sukses
@@ -2323,15 +2194,10 @@ bot.command("addsnk", async (ctx) => {
     );
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // === Load produk ===
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2371,10 +2237,10 @@ bot.command("addsnk", async (ctx) => {
 
   // === Simpan perubahan
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // === Output sukses
@@ -2415,15 +2281,10 @@ bot.command("editsnk", async (ctx) => {
     );
   }
 
-  const filePath = path.join(__dirname, "data", "products.json");
-  if (!fs.existsSync(filePath)) {
-    return ctx.reply("❌ File products.json tidak ditemukan.");
-  }
-
   // === Load file produk
   let products = [];
   try {
-    products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products.json:", err);
     return ctx.reply("⚠️ Gagal membaca file data produk.");
@@ -2456,10 +2317,10 @@ bot.command("editsnk", async (ctx) => {
 
   // === Simpan perubahan
   try {
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    await saveProducts(products);
   } catch (err) {
-    console.error("❌ Gagal menyimpan file:", err);
-    return ctx.reply("⚠️ Gagal menyimpan perubahan ke file data.");
+    console.error("❌ Gagal menyimpan data:", err);
+    return ctx.reply("⚠️ Gagal menyimpan perubahan ke data.");
   }
 
   // === Output sukses
@@ -2496,14 +2357,8 @@ bot.command("delsnk", async (ctx) => {
     if (!code || !varianName)
       return ctx.reply("⚠️ Format kurang lengkap!\nGunakan: /delsnk code|varian");
 
-    const filePath = path.join(__dirname, "data", "products.json");
-    if (!fs.existsSync(filePath)) {
-      return ctx.reply("❌ File products.json tidak ditemukan.");
-    }
-
     // 🔁 Load file produk (auto reload)
-    delete require.cache[require.resolve("./data/products.json")];
-    const products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const products = await loadProducts();
 
     // 🔍 Cari produk berdasarkan code
     const product = products.find(
@@ -2534,8 +2389,8 @@ bot.command("delsnk", async (ctx) => {
     // 🔥 Hapus isi S&K
     variant.snk = "";
 
-    // 💾 Simpan ulang ke file
-    fs.writeFileSync(filePath, JSON.stringify(products, null, 2), "utf8");
+    // 💾 Simpan ulang ke data
+    await saveProducts(products);
 
     // 💬 Respon sukses
     await ctx.reply(
@@ -2581,7 +2436,6 @@ function isCekSnkPublic(val) {
 // === 📜 CEK S&K VARIAN PRODUK (ADMIN / USER SESUAI SETTINGS.JS) ===
 bot.command("ceksnk", async (ctx) => {
   try {
-    const fs = require("fs");
     const path = require("path");
 
     // helper kecil
@@ -2616,14 +2470,9 @@ bot.command("ceksnk", async (ctx) => {
       return ctx.reply("⚠️ Format tidak lengkap!\nContoh: /ceksnk am|Android");
     }
 
-    const filePath = path.resolve("data/products.json");
-    if (!fs.existsSync(filePath)) {
-      return ctx.reply("❌ File products.json tidak ditemukan.");
-    }
-
     let products;
     try {
-      products = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      products = await loadProducts();
     } catch {
       return ctx.reply("❌ Gagal membaca products.json.");
     }
@@ -3090,13 +2939,8 @@ bot.command("cekcode", async (ctx) => {
     const settings = loadSettings();
     if (!isAdminId(ctx.from?.id, settings)) return ctx.reply("🚫 Kamu bukan admin.");
 
-    const productsFile = path.resolve("data/products.json");
-    if (!fs.existsSync(productsFile)) {
-      return ctx.reply("📭 File products.json belum ada atau kosong.");
-    }
-
     let products;
-    try { products = JSON.parse(fs.readFileSync(productsFile, "utf8")); }
+    try { products = await loadProducts(); }
     catch { return ctx.reply("⚠️ Gagal membaca products.json."); }
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -3142,7 +2986,6 @@ bot.command("cekcode", async (ctx) => {
 // === 🔁 Handler Pagination /cekcode ===
 bot.action(/cekcode:(\d+)/, async (ctx) => {
   try {
-    const fs = require("fs");
     const path = require("path");
 
     const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -3158,14 +3001,9 @@ bot.action(/cekcode:(\d+)/, async (ctx) => {
     if (!isAdminId(ctx.from?.id, settings)) return ctx.answerCbQuery("🚫 Hanya admin!");
 
     const page = parseInt(ctx.match[1], 10) || 1;
-    const productsFile = path.resolve("data/products.json");
-
-    if (!fs.existsSync(productsFile)) {
-      return ctx.answerCbQuery("⚠️ File data produk tidak ditemukan.");
-    }
 
     let products;
-    try { products = JSON.parse(fs.readFileSync(productsFile, "utf8")); }
+    try { products = await loadProducts(); }
     catch { return ctx.answerCbQuery("⚠️ Gagal membaca file data."); }
 
     const perPage = 10;
@@ -3204,13 +3042,7 @@ bot.action(/cekcode:(\d+)/, async (ctx) => {
 // === 📦 /cekstok — Lihat seluruh stok produk (PUBLIC + emoji status + tombol 🔄 Refresh + timestamp) ===
 bot.command("cekstok", async (ctx) => {
   try {
-    const productsFile = path.join(__dirname, "data", "products.json");
-
-    if (!fs.existsSync(productsFile)) {
-      return ctx.reply("📭 File products.json belum ada atau kosong.");
-    }
-
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    const products = await loadProducts();
     if (!products.length) {
       return ctx.reply("📭 Belum ada produk yang terdaftar.");
     }
@@ -3254,12 +3086,7 @@ bot.command("cekstok", async (ctx) => {
 // === 🔁 Handler tombol 🔄 Refresh /cekstok ===
 bot.action("cekstok_refresh", async (ctx) => {
   try {
-    const productsFile = path.join(__dirname, "data", "products.json");
-
-    if (!fs.existsSync(productsFile))
-      return ctx.answerCbQuery("⚠️ File data produk tidak ditemukan.");
-
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    const products = await loadProducts();
     if (!products.length) {
       await ctx.editMessageText("📭 Belum ada produk yang terdaftar.");
       return ctx.answerCbQuery("Daftar kosong, tidak ada yang di-refresh.");
@@ -3327,20 +3154,10 @@ bot.command("cekid", async (ctx) => {
     const txId = Number(arg);
     if (!Number.isFinite(txId)) return ctx.reply("⚠️ ID harus berupa angka.\ncontoh: /cekid 87");
 
-    // path file data
-    const fse = require("fs");
-    const p = require("path");
-    const txFile = p.join(process.cwd(), "data", "transactions.json");
-
-    if (!fse.existsSync(txFile)) {
-      return ctx.reply("❌ File data transaksi tidak ditemukan (data/transactions.json).");
-    }
-
     // baca & cari transaksi
     let list = [];
     try {
-      list = JSON.parse(fse.readFileSync(txFile, "utf8"));
-      if (!Array.isArray(list)) list = [];
+      list = await loadTransactions();
     } catch (e) {
       console.error("❌ Gagal baca transactions.json:", e);
       return ctx.reply("❌ Gagal membaca file transaksi.");
@@ -3354,14 +3171,11 @@ bot.command("cekid", async (ctx) => {
     // === ambil info produk untuk field "Produk" ===
     let productName = "-", productCode = "-";
     try {
-      const productsPath = p.join(process.cwd(), "data", "products.json");
-      if (fse.existsSync(productsPath)) {
-        const plist = JSON.parse(fse.readFileSync(productsPath, "utf8")) || [];
-        const prod = plist.find((x) => String(x.id) === String(t.product_id));
-        if (prod) {
-          productName = prod.name || "-";
-          productCode = prod.code || "-";
-        }
+      const plist = await loadProducts();
+      const prod = plist.find((x) => String(x.id) === String(t.product_id));
+      if (prod) {
+        productName = prod.name || "-";
+        productCode = prod.code || "-";
       }
     } catch {}
 
@@ -3375,7 +3189,7 @@ bot.command("cekid", async (ctx) => {
     const boxHeader = [
       "🧾 <b>DETAIL TRANSAKSI</b>",
       "",
-      "SEN PRO PREMIUM APPS",
+      `${STORE_NICKNAME} PREMIUM APPS`,
       "┌───────────────────────┐",
       `│ <b>ID</b>      : #${t.id}`,
       `│ <b>Status</b>  : ${t.status ?? "-"}`,
@@ -3387,7 +3201,7 @@ bot.command("cekid", async (ctx) => {
     // deretan field yang diminta
     const lines = [
       `ID Customer   : ${t.user_id ?? ""}`,
-      `SENPRO ID    : ${t.reference_id ?? ""}`,
+      `Faktur        : ${t.reference_id ?? ""}`,
       `Username      : ${t.username ?? ""}`,
       `Produk        : ${productName} [${productCode}]`,
       `Varian        : ${t.variant_name ?? ""}`,
@@ -3437,16 +3251,13 @@ bot.command("kirim", async (ctx) => {
     if (!code || !varianInput || !Number.isFinite(jumlah) || jumlah <= 0)
       return ctx.reply("⚠️ Format salah!\nPastikan jumlah angka > 0.\nContoh: /kirim @user am|iphone|1");
 
-    const fs   = require("fs");
     const path = require("path");
     const stokFile     = path.join(__dirname, "stok", `${code}.json`);
-    const productsFile = path.join(__dirname, "data", "products.json");
 
-    if (!fs.existsSync(stokFile))     return ctx.reply(`⚠️ File stok tidak ditemukan untuk kode "${code}".`);
-    if (!fs.existsSync(productsFile)) return ctx.reply("⚠️ File products.json tidak ditemukan.");
+    if (!(await existsJson(stokFile))) return ctx.reply(`⚠️ File stok tidak ditemukan untuk kode "${code}".`);
 
     // Muat produk & varian
-    const products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+    const products = await loadProducts();
     const product  = products.find(p => p.code && String(p.code).toLowerCase() === code);
     if (!product) return ctx.reply(`⚠️ Produk dengan kode "${code}" tidak ditemukan di products.json`);
 
@@ -3456,8 +3267,7 @@ bot.command("kirim", async (ctx) => {
     const varianName = targetVar.name;
 
     // Baca stok (TIDAK MENGURANGI DULU)
-    let stokList = JSON.parse(fs.readFileSync(stokFile, "utf8"));
-    if (!Array.isArray(stokList)) stokList = [];
+    let stokList = await readStockFile(stokFile);
 
     const stokVarian = stokList
       .filter(s => s?.varian && String(s.varian).toLowerCase() === String(varianName).toLowerCase())
@@ -3544,7 +3354,7 @@ bot.command("kirim", async (ctx) => {
       if (same && removed < jumlah) { removed++; continue; }
       newStokList.push(item);
     }
-    fs.writeFileSync(stokFile, JSON.stringify(newStokList, null, 2));
+    await writeStockFile(stokFile, newStokList);
 
     // Sinkron ke products.json (variants[].stock)
     const freshCount = newStokList.filter(
@@ -3556,7 +3366,7 @@ bot.command("kirim", async (ctx) => {
         const vi = (products[pi].variants || []).findIndex(v => v.name === varianName);
         if (vi >= 0) {
           products[pi].variants[vi].stock = freshCount;
-          fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+          await saveProducts(products);
         }
       }
     }
@@ -3866,24 +3676,17 @@ bot.on("photo", async (ctx) => {
     console.log("🌐 [DEBUG] Catbox URL:", catboxUrl);
 
     // === Path ===
-    const productsFile = path.join(__dirname, "data", "products.json");
-    const stokFolder = path.join(__dirname, "stok");
-    const stokFile = path.join(stokFolder, `${code.toLowerCase()}.json`);
-
-    if (!fs.existsSync(stokFolder)) fs.mkdirSync(stokFolder, { recursive: true });
+    const stokFile = path.join(__dirname, "stok", `${code.toLowerCase()}.json`);
 
     // === Load produk lama ===
-    let products = [];
-    if (fs.existsSync(productsFile)) {
-      products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
-    }
+    let products = await loadProducts();
 
     // === Cek duplikat ===
     if (products.some(p => p.code.toLowerCase() === code.toLowerCase()))
       return ctx.reply("⚠️ Produk dengan kode tersebut sudah ada!");
 
     // === Buat file stok kosong ===
-    if (!fs.existsSync(stokFile)) fs.writeFileSync(stokFile, "[]", "utf8");
+    if (!(await existsJson(stokFile))) await writeStockFile(stokFile, []);
 
     // === Tambah produk baru ===
     const newProduct = {
@@ -3903,7 +3706,7 @@ products.sort((a, b) =>
   String(a.name || "").localeCompare(String(b.name || ""), "id", { sensitivity: "base" })
 );
     products.forEach((p, i) => p.id = i + 1);
-    fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     // === Tampilkan hasil gaya “Premium Store” ===
     await ctx.replyWithPhoto(catboxUrl, {
@@ -3936,8 +3739,7 @@ bot.on("callback_query", async (ctx, next) => {
 
     const page = parseInt(data.split("_")[2]);
     const chatId = String(ctx.chat.id);
-    const transactionsPath = path.resolve("data/transactions.json");
-    const transactions = JSON.parse(fs.readFileSync(transactionsPath, "utf8"));
+    const transactions = await loadTransactions();
     const userTx = transactions.filter(t => t.user_id === chatId);
 
     if (userTx.length === 0) {
@@ -4045,7 +3847,7 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
   ).join('\n');
 
   const text = [
-    `SEN PRO PREMIUM APPS`,
+    `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -4267,10 +4069,8 @@ if (data.startsWith("pay_qris_")) {
 if (data.startsWith("refresh_")) {
   try {
     const pid = parseInt(data.split("_")[1]);
-    const productsPath = path.join(__dirname, "data", "products.json");
-
     // load semua produk
-    const products = JSON.parse(fs.readFileSync(productsPath, "utf8"));
+    const products = await loadProducts();
     const product = products.find((p) => p.id === pid);
     if (!product) return ctx.answerCbQuery("⚠️ Produk tidak ditemukan!");
 
@@ -4282,8 +4082,8 @@ if (data.startsWith("refresh_")) {
     console.log(`📂 Path file stok: ${stokPath}`);
 
     // 🔄 auto sinkron stok + KEEP transaksi pending
-    if (fs.existsSync(stokPath)) {
-      const stokList = JSON.parse(fs.readFileSync(stokPath, "utf8"));
+    if (await existsJson(stokPath)) {
+      const stokList = await readStockFile(stokPath);
       console.log(`📦 Jumlah data stok di file: ${stokList.length}`);
 
       for (const v of product.variants) {
@@ -4326,8 +4126,8 @@ if (data.startsWith("refresh_")) {
       }
 
       // simpan hasil update stok ke /data/products.json
-      fs.writeFileSync(productsPath, JSON.stringify(products, null, 2));
-      console.log(`✅ Stok tersinkron ke ${productsPath}\n`);
+      await saveProducts(products);
+      console.log(`✅ Stok tersinkron ke database\n`);
     } else {
       console.warn(`⚠️ File stok tidak ditemukan: ${stokPath}\n`);
     }
@@ -4443,7 +4243,7 @@ if (data.startsWith("refresh_")) {
       .join("\n");
 
     const text = [
-      `SEN PRO PREMIUM APPS`,
+      `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
       `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -4788,8 +4588,8 @@ if (data.startsWith("confirm_pay_")) {
     let akunText = "❌ Tidak ada akun tersedia";
     let akunDataList = []; // simpan beberapa akun
 
-    if (fs.existsSync(stokPath)) {
-      const stokList = JSON.parse(fs.readFileSync(stokPath, "utf8"));
+    if (await existsJson(stokPath)) {
+      const stokList = await readStockFile(stokPath);
 
       // Ambil semua akun yang cocok dengan varian
       const stokFiltered = stokList.filter(
@@ -4817,7 +4617,7 @@ if (data.startsWith("confirm_pay_")) {
         const sisaStok = stokList.filter(
           (s) => !akunDataList.some((a) => a.email === s.email)
         );
-        fs.writeFileSync(stokPath, JSON.stringify(sisaStok, null, 2));
+        await writeStockFile(stokPath, sisaStok);
 
         console.log(`🗑️ ${jumlah} akun dihapus dari ${stokPath}`);
       } else {
@@ -4870,7 +4670,7 @@ if (data.startsWith("confirm_pay_")) {
       ``,
       `🎁 <b>Akun Kamu:</b>\n${akunText}`,
       ``,
-      `Terima kasih telah berbelanja di <b>SEN PRO</b> 💙`,
+      `Terima kasih telah berbelanja di <b>${STORE_NICKNAME}</b> 💙`,
       `🧾 <i>ID Transaksi:</i> <code>${txId}</code>`,
       `🕒 ${now}`,
     ].join("\n");
@@ -5058,7 +4858,7 @@ if (data.startsWith("back_")) {
 
   // tambahin sedikit penanda waktu agar Telegram anggap teks berubah
   const text = [
-    `SEN PRO PREMIUM APPS`,
+    `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -5215,7 +5015,7 @@ bot.action(/^paid_qris_(\d+)$/, async (ctx) => {
       ],
     };
 
-    const useFrame = isQrisFrameOn(); // ON/OFF frame
+    const useFrame = await isQrisFrameOn(); // ON/OFF frame
 
     let sentMsgId = null;
 
@@ -5320,7 +5120,7 @@ bot.command("setframeqris", async (ctx) => {
   }
 
   const on = arg === "on";
-  const updated = setQrisFrame(on);
+  const updated = await setQrisFrame(on);
 
   return ctx.reply(
     `✅ Frame QRIS sekarang: ${updated ? "ON (pakai frame)" : "OFF (QR default)"}`
@@ -5341,7 +5141,7 @@ bot.action(/^cancel_confirm_(\d+)$/, async (ctx) => {
       .join("\n");
 
     const text = [
-      `SEN PRO PREMIUM APPS`,
+      `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
       `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -5599,7 +5399,6 @@ bot.action("refresh_report", async (ctx) => {
 // ===== /riwayat (ADMIN) + pagination (isolated scope) =====
 (() => {
   const path = require('path');
-  const fs = require('fs');
 
   // ukuran halaman khusus admin
   const PER_PAGE_ADMIN = 5;
@@ -5622,14 +5421,6 @@ bot.action("refresh_report", async (ctx) => {
     return s || '-';
   };
 
-  // util baca file aman
-  const readJsonSafe = (p, fallback=[]) => {
-    try {
-      if (!fs.existsSync(p)) return fallback;
-      const raw = fs.readFileSync(p,'utf8');
-      return JSON.parse(raw);
-    } catch { return fallback; }
-  };
 
 // === 👑 /riwayat (ADMIN ONLY — by username atau ID) ===
 bot.command('riwayat', async (ctx) => {
@@ -5638,7 +5429,6 @@ bot.command('riwayat', async (ctx) => {
 
     // helper lokal (biar gak bentrok sama yang lain)
     const PER_PAGE_ADMIN = 5;
-    const readJsonSafe = (p, def) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return def; } };
     const escAdm  = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const fmtRpAdm = (n) => new Intl.NumberFormat('id-ID').format(Number(n || 0));
     const tsWIBAdm = (ms) => {
@@ -5666,13 +5456,9 @@ bot.command('riwayat', async (ctx) => {
     const identifier = args[0].replace('@','').trim();
 
     // ambil sumber data
-    const dbPath   = path.resolve('data/db.json');
-    const txPath   = path.resolve('data/transactions.json');
-    const prodPath = path.resolve('data/products.json');
-
-    const db       = readJsonSafe(dbPath, { users: {} });
-    const allTx    = readJsonSafe(txPath, []);
-    const prodArr  = readJsonSafe(prodPath, []);
+    const db       = await loadDB();
+    const allTx    = await loadTransactions();
+    const prodArr  = await loadProducts();
     const prodMap  = Object.fromEntries((prodArr || []).map(p => [String(p.id), p.name]));
 
     // cari user by ID atau username
@@ -5775,7 +5561,6 @@ bot.action(/adm_page_(\d+)_(\d+)/, async (ctx) => {
 
     // helper lokal (lagi supaya gak bentrok)
     const PER_PAGE_ADMIN = 5;
-    const readJsonSafe = (p, def) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return def; } };
     const escAdm  = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const fmtRpAdm = (n) => new Intl.NumberFormat('id-ID').format(Number(n || 0));
     const tsWIBAdm = (ms) => {
@@ -5798,13 +5583,9 @@ bot.action(/adm_page_(\d+)_(\d+)/, async (ctx) => {
     const userId = ctx.match[1];
     const page   = parseInt(ctx.match[2], 10) || 1;
 
-    const txPath   = path.resolve('data/transactions.json');
-    const dbPath   = path.resolve('data/db.json');
-    const prodPath = path.resolve('data/products.json');
-
-    const allTx   = readJsonSafe(txPath, []);
-    const db      = readJsonSafe(dbPath, { users: {} });
-    const prodArr = readJsonSafe(prodPath, []);
+    const allTx   = await loadTransactions();
+    const db      = await loadDB();
+    const prodArr = await loadProducts();
     const prodMap = Object.fromEntries((prodArr || []).map(p => [String(p.id), p.name]));
 
     const target = db.users[userId];
@@ -6087,37 +5868,25 @@ bot.action(/^adm_page_(\d+)_(\d+)$/, async (ctx) => {
 });
 
 // === 💾 AUTO BACKUP TRANSACTIONS (auto-clean 30 hari) ===
-setInterval(() => {
+setInterval(async () => {
   try {
-    const src = path.join(__dirname, "data", "transactions.json");
-    if (!fs.existsSync(src)) return;
+    const transactions = await loadTransactions();
+    if (!transactions.length) return;
 
-    const backupDir = path.join(__dirname, "backups", "transactions");
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    const db = await getDb();
+    const backups = db.collection("transaction_backups");
+    const createdAt = new Date();
 
-    // 🕒 Buat nama file backup dengan timestamp
-    const timestamp = dayjs().tz().format("YYYY-MM-DD_HH-mm-ss");
-    const dest = path.join(backupDir, `transactions_${timestamp}.json`);
+    await backups.insertOne({
+      createdAt,
+      data: transactions,
+    });
 
-    // 💾 Salin file transaksi ke backup
-    fs.copyFileSync(src, dest);
-    console.log(`💾 Backup transaksi tersimpan: ${dest}`);
+    console.log(`💾 Backup transaksi tersimpan di MongoDB: ${createdAt.toISOString()}`);
 
     // 🧹 Hapus backup yang lebih tua dari 30 hari
-    const files = fs.readdirSync(backupDir);
-    const now = Date.now();
-    const thirtyDays = 1000 * 60 * 60 * 24 * 30; // 30 hari
-
-    for (const file of files) {
-      const filePath = path.join(backupDir, file);
-      const stats = fs.statSync(filePath);
-      const age = now - stats.mtimeMs;
-
-      if (age > thirtyDays) {
-        fs.unlinkSync(filePath);
-        console.log(`🧹 Hapus backup lama (lebih dari 30 hari): ${file}`);
-      }
-    }
+    const thirtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
+    await backups.deleteMany({ createdAt: { $lt: thirtyDaysAgo } });
   } catch (err) {
     console.error("❌ Gagal backup transaksi:", err.message);
   }
@@ -6319,19 +6088,16 @@ setInterval(async () => {
   if (autoSyncPaused) return;
   try {
     const stokFolder = path.join(__dirname, "stok");
-    const productsFile = path.join(__dirname, "data", "products.json");
-    if (!fs.existsSync(productsFile)) return;
+    let products = await loadProducts();
+    if (!products.length) return;
 
-    let products = JSON.parse(fs.readFileSync(productsFile, "utf8"));
-    const stokFiles = fs
-      .readdirSync(stokFolder)
-      .filter((f) => f.endsWith(".json"));
+    const stokFiles = (await listJsonDir(stokFolder)).filter((f) => f.endsWith(".json"));
 
     // 🔁 Loop file stok
     for (const file of stokFiles) {
       const code = file.replace(".json", "").toLowerCase();
       const stokPath = path.join(stokFolder, file);
-      const stokList = JSON.parse(fs.readFileSync(stokPath, "utf8"));
+      const stokList = await readStockFile(stokPath);
       const product = products.find(
         (p) => p.code && p.code.toLowerCase() === code
       );
@@ -6373,7 +6139,7 @@ setInterval(async () => {
       }
     }
 
-    fs.writeFileSync(productsFile, JSON.stringify(products, null, 2));
+    await saveProducts(products);
 
     const changedProducts = products.filter((p) => {
       const prev = lastProducts.find((x) => x.id === p.id);
@@ -6387,7 +6153,7 @@ setInterval(async () => {
       const now = dayjs().tz().format("HH.mm.ss [WIB]");
 
       for (const product of changedProducts) {
-        const freshData = JSON.parse(fs.readFileSync(productsFile, "utf8"));
+        const freshData = await loadProducts();
         const freshProduct = freshData.find((p) => p.id === product.id);
         if (!freshProduct) continue;
 
@@ -6399,7 +6165,7 @@ setInterval(async () => {
           .join("\n");
 
         const caption = [
-          `SEN PRO PREMIUM APPS`,
+          `${STORE_NICKNAME} PREMIUM APPS`,
           `╭──────────────────────╮`,
           `├ <b>Produk:</b> ${freshProduct.name}`,
           `├ <b>Stok Terjual:</b> ${Number(freshProduct.sold || 0)}`,
