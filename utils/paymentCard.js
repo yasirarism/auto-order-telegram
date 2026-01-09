@@ -179,7 +179,8 @@ function buildPaymentText({
     `- Status       : ${statusPembayaran}`,
   ].join("\n");
 
-  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ Gateway Payment ]</i>`;
+  const gatewayLabel = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
+  return `<b>${header}</b>\n<pre>${body}</pre>\n<i>Note:\nTestimoni ini adalah testimoni nyata yang terintegrasi dengan pembayaran real time.\n[ ${gatewayLabel} ]</i>`;
 }
 
 function maskUserId(id) {
@@ -192,6 +193,7 @@ function maskUserId(id) {
 async function sendPaymentAnnouncement(bot, chatTarget, payload) {
   const png = await buildPaymentCardPNG(payload);
   const htmlDetail = buildPaymentText(payload);
+  const botName = process.env.BOT_NAME_CHANNEL || "@sphynixstore_bot";
 
   const testiBox = [
     "━━━━━━━━━━━━━━━",
@@ -202,7 +204,7 @@ async function sendPaymentAnnouncement(bot, chatTarget, payload) {
     "",
     payload.maskedUserId ? `👤 Customer ID : ${payload.maskedUserId}` : "",
     "",
-    "🤖 Bot Order : @sphynixstore_bot",
+    `🤖 Bot Order : ${botName}`,
   ].join("\n");
 
   const caption = `${htmlDetail}\n\n${testiBox}`;

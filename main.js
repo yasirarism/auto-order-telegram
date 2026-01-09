@@ -42,6 +42,8 @@ dayjs.extend(utc);
 dayjs.extend(tz);
 dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
 
+const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
+
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
 
@@ -661,7 +663,7 @@ bot.hears('🧾 List Produk', async (ctx) => {
     `━━━━━━━━━━━━━━━━━━━`,
     ...PRODUCTS.map((p, i) => `[${i + 1}] ${p}`),
     `━━━━━━━━━━━━━━━━━━━`,
-    `This bot is proudly created by\n© SEN PRO 2025`
+    `This bot is proudly created by\n© ${STORE_NICKNAME} 2025`
   ].join('\n');
 
 // 🧮 Generate keyboard dinamis sesuai jumlah produk
@@ -3186,7 +3188,7 @@ bot.command("cekid", async (ctx) => {
     const boxHeader = [
       "🧾 <b>DETAIL TRANSAKSI</b>",
       "",
-      "SEN PRO PREMIUM APPS",
+      `${STORE_NICKNAME} PREMIUM APPS`,
       "┌───────────────────────┐",
       `│ <b>ID</b>      : #${t.id}`,
       `│ <b>Status</b>  : ${t.status ?? "-"}`,
@@ -3844,7 +3846,7 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
   ).join('\n');
 
   const text = [
-    `SEN PRO PREMIUM APPS`,
+    `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -4240,7 +4242,7 @@ if (data.startsWith("refresh_")) {
       .join("\n");
 
     const text = [
-      `SEN PRO PREMIUM APPS`,
+      `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
       `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -4667,7 +4669,7 @@ if (data.startsWith("confirm_pay_")) {
       ``,
       `🎁 <b>Akun Kamu:</b>\n${akunText}`,
       ``,
-      `Terima kasih telah berbelanja di <b>SEN PRO</b> 💙`,
+      `Terima kasih telah berbelanja di <b>${STORE_NICKNAME}</b> 💙`,
       `🧾 <i>ID Transaksi:</i> <code>${txId}</code>`,
       `🕒 ${now}`,
     ].join("\n");
@@ -4855,7 +4857,7 @@ if (data.startsWith("back_")) {
 
   // tambahin sedikit penanda waktu agar Telegram anggap teks berubah
   const text = [
-    `SEN PRO PREMIUM APPS`,
+    `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -5138,7 +5140,7 @@ bot.action(/^cancel_confirm_(\d+)$/, async (ctx) => {
       .join("\n");
 
     const text = [
-      `SEN PRO PREMIUM APPS`,
+      `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
       `├ <b>Stok Terjual:</b> ${Number(product.sold || 0)}`,
@@ -6162,7 +6164,7 @@ setInterval(async () => {
           .join("\n");
 
         const caption = [
-          `SEN PRO PREMIUM APPS`,
+          `${STORE_NICKNAME} PREMIUM APPS`,
           `╭──────────────────────╮`,
           `├ <b>Produk:</b> ${freshProduct.name}`,
           `├ <b>Stok Terjual:</b> ${Number(freshProduct.sold || 0)}`,

@@ -39,6 +39,10 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `TZ` — timezone, contoh `Asia/Jakarta`.
 - `MONGODB_URI` — koneksi MongoDB, contoh `mongodb://localhost:27017`.
 - `MONGODB_DB` — nama database MongoDB, contoh `auto_order`.
+- `STORE_NICKNAME` — nama panggilan toko untuk label UI, contoh `SEN PRO`.
+- `STORE_NAME` — nama toko untuk laporan pembayaran, contoh `Sphynixstore`.
+- `PAYMENT_GATEWAY_LABEL` — label gateway untuk monitoring pembayaran, contoh `YSPAY`.
+- `BOT_NAME_CHANNEL` — nama bot untuk caption testimoni channel, contoh `@sphynixstore_bot`.
 - `QR_STRING` — string QR jika diperlukan.
 - `PAYMENT_EXPIRES_MINUTES` — batas waktu pembayaran (menit).
 - `PAYMENT_GATEWAY` — nama payment gateway (contoh: `gopay`).
