@@ -5338,6 +5338,8 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
         `🔹 <b>/addstok</b> — <code>Tambah Akun</code>`,
         `🔹 <b>/delstok</b> — <code>Hapus Akun</code>`,
         `🔹 <b>/addvar</b> — <code>Tambah Varian</code>`,
+        `🔹 <b>/editvar</b> — <code>Edit Varian</code>`,
+        `🔹 <b>/delvar</b> — <code>Hapus Varian</code>`,
         `🔹 <b>/editharga</b> — <code>Ubah Harga</code>`,
         `🔹 <b>/addsnk</b> — <code>Tambah S&K</code>`,
         `🔹 <b>/ceksnk</b> — <code>Lihat S&K</code>`
