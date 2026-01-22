@@ -70,6 +70,13 @@ const fmtFull  = (d = nowTZ()) => d.format("dddd, DD MMMM YYYY HH:mm:ss"); // un
 const fmtShort = (d = nowTZ()) => `${d.format("HH.mm.ss")} ${tzLabel()}`;  // untuk "Refresh at"
 const fmtDate  = (d = nowTZ()) => d.format("DD MMMM YYYY");
 const fmtTime  = (d = nowTZ()) => `${d.format("HH:mm:ss")} ${tzLabel()}`;
+const greetingByHour = (d = nowTZ()) => {
+  const hour = d.hour();
+  if (hour >= 4 && hour < 11) return "pagi";
+  if (hour >= 11 && hour < 15) return "siang";
+  if (hour >= 15 && hour < 19) return "sore";
+  return "malam";
+};
 
 const CronRegistry = require("./lib/cron");
 const CornService = new CronRegistry()
@@ -545,12 +552,21 @@ bot.start(async (ctx) => {
   if (user?.first_name && me.first_name !== user.first_name) me.first_name = user.first_name;
   const now = fmtFull();
   const totalUsers = db.stats.totalUsers || 1;
+  const isPaidStatus = (status) =>
+    ["paid", "sukses", "success", "completed"].includes(
+      String(status || "").toLowerCase()
+    );
+  const greeting = greetingByHour();
 
   // 💰 Hitung total transaksi user dari transactions.json (fix: realtime)
   const userTotalTransaksi = Array.isArray(transactions)
     ? transactions
-        .filter(t => String(t.user_id) === chatId && t.status === 'paid')
-        .reduce((sum, t) => sum + (t.total_amount || 0), 0)
+        .filter(t => String(t.user_id) === chatId && isPaidStatus(t.status))
+        .reduce(
+          (sum, t) =>
+            sum + Number(t.total_amount ?? t.total ?? t.amount ?? 0),
+          0
+        )
     : 0;
 
   // 🔄 Update data user (sinkron)
@@ -563,8 +579,12 @@ bot.start(async (ctx) => {
 
   const totalTransaksi = Array.isArray(transactions)
     ? transactions
-    .filter(t =>  t.status === 'paid')
-    .reduce((sum, t) => sum + (t.total_amount || 0), 0)
+    .filter(t => isPaidStatus(t.status))
+    .reduce(
+      (sum, t) =>
+        sum + Number(t.total_amount ?? t.total ?? t.amount ?? 0),
+      0
+    )
     : 0;
 
   db.stats.totalSold = totalSold;
@@ -574,7 +594,7 @@ bot.start(async (ctx) => {
   await saveDB(db);
 
   const text = [
-    `Halo ${esc(me.first_name || me.username || 'Pengguna')} 👋`,
+    `Selamat ${greeting} ${esc(me.first_name || me.username || 'Pengguna')} 👋`,
     `<i>${esc(now)}</i>`,
     ``,
     `<b>User Info :</b>`,
