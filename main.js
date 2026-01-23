@@ -94,6 +94,15 @@ function getSettings() {
   }
 }
 
+function getAdminContactLabel() {
+  const settings = getSettings();
+  const admins = settings.admins || [];
+  const admin = admins.find((a) => a?.username) || admins[0];
+  if (admin?.username) return `@${String(admin.username).replace("@", "")}`;
+  if (admin?.id) return String(admin.id);
+  return "admin";
+}
+
 const sessions = new Map();
 
 // === 👑 isAdmin Dinamis (pakai settings terbaru tiap kali dipanggil)
@@ -3926,7 +3935,7 @@ bot.hears('❓ Cara Order', async (ctx) => {
     `5️⃣ Setelah pembayaran diverifikasi, produk otomatis dikirim.`,
     ``,
     `💬 Jika ada kendala, hubungi admin:`,
-    `<b>@neilssen</b>`,
+    `<b>${getAdminContactLabel()}</b>`,
     ``,
     `━━━━━━━━━━━━━━━━━━━`,
     `<i>Bot by © ${AUTHOR} 2025</i>`
