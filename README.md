@@ -36,6 +36,9 @@ Bot Telegram untuk kebutuhan auto order. Project ini berjalan di Node.js 22 dan 
 Berikut variabel penting yang tersedia di `.env.example`:
 
 - `BOT_TOKEN` — token bot dari BotFather.
+- `BOT_NAME` — nama bot (override `settings.js`).
+- `BOT_VERSION` — versi bot (override `settings.js`).
+- `BOT_AUTHOR` — nama author bot (override `settings.js`).
 - `TZ` — timezone, contoh `Asia/Jakarta`.
 - `MONGODB_URI` — koneksi MongoDB, contoh `mongodb://localhost:27017`.
 - `MONGODB_DB` — nama database MongoDB, contoh `auto_order`.
@@ -47,6 +50,10 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `PAYMENT_GATEWAY` — nama payment gateway (contoh: `gopay`).
 - `GOBIZ_EMAIL` — email akun GoBiz (jika digunakan).
 - `GOBIZ_PASSWORD` — password akun GoBiz (jika digunakan).
+- `ADMIN_IDS` — daftar ID admin (pisahkan dengan koma).
+- `ADMIN_USERNAMES` — daftar username admin (pisahkan dengan koma).
+- `ADMIN_JSON` — JSON array admin (misalnya `[{"id":"123","username":"foo"}]`).
+- `ALLOW_USER_CEK_SNK` — `true/false` untuk akses publik `/ceksnk`.
 
 ## Menjalankan secara lokal
 
