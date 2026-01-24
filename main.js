@@ -44,9 +44,6 @@ dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
 
 const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
 const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
-const FLASH_SALE_DISCOUNT_PERCENT = Number(
-  process.env.FLASH_SALE_DISCOUNT_PERCENT || 0
-);
 
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
@@ -172,8 +169,14 @@ function rupiah(n = 0) {
   return new Intl.NumberFormat("id-ID").format(n);
 }
 
+function getFlashSaleDiscount() {
+  return Number.isFinite(Number(global.flashSaleDiscount))
+    ? Number(global.flashSaleDiscount)
+    : 0;
+}
+
 function isFlashSaleActive() {
-  return Number.isFinite(FLASH_SALE_DISCOUNT_PERCENT) && FLASH_SALE_DISCOUNT_PERCENT > 0;
+  return getFlashSaleDiscount() > 0;
 }
 
 function clampDiscount(value) {
@@ -184,7 +187,7 @@ function clampDiscount(value) {
 function getFlashSalePrice(price) {
   const base = Number(price || 0);
   if (!isFlashSaleActive()) return base;
-  const discount = clampDiscount(FLASH_SALE_DISCOUNT_PERCENT);
+  const discount = clampDiscount(getFlashSaleDiscount());
   return Math.max(0, Math.round(base * (100 - discount) / 100));
 }
 
@@ -571,6 +574,8 @@ bot.start(async (ctx) => {
 
   if (!db.users) db.users = {};
   if (!db.stats) db.stats = { totalUsers: 0 };
+  if (!db.promo) db.promo = { flashSalePercent: 0 };
+  global.flashSaleDiscount = clampDiscount(db.promo.flashSalePercent || 0);
 
   global.dbCache = db; 
 
@@ -788,7 +793,7 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
     console.error("❌ Gagal membaca products:", err);
   }
 
-  const discountLabel = clampDiscount(FLASH_SALE_DISCOUNT_PERCENT);
+  const discountLabel = clampDiscount(getFlashSaleDiscount());
   const listText = [
     `<b>🔥 FLASH SALE</b>`,
     `<i>Diskon ${discountLabel}% untuk semua produk</i>`,
@@ -3425,6 +3430,45 @@ bot.command("cekid", async (ctx) => {
   }
 });
 
+// === 🔥 FLASH SALE CONTROL (ADMIN ONLY)
+// Format: /flashsale <persen|off>
+bot.command("flashsale", async (ctx) => {
+  try {
+    if (!isAdmin(ctx.from.id)) return ctx.reply("🚫 Kamu bukan admin.");
+    if (!isAdminNow(ctx)) return ctx.reply("🚫 Kamu bukan admin.");
+
+    const arg = (ctx.message?.text || "").split(" ").slice(1).join(" ").trim();
+    if (!arg) {
+      const current = clampDiscount(getFlashSaleDiscount());
+      return ctx.reply(
+        `⚙️ Flash Sale saat ini: <b>${current}%</b>\n` +
+        `Gunakan: /flashsale <persen|off>\n` +
+        `Contoh: /flashsale 20`,
+        { parse_mode: "HTML" }
+      );
+    }
+
+    const input = arg.toLowerCase();
+    const nextValue = input === "off" ? 0 : Number(input);
+    if (!Number.isFinite(nextValue)) {
+      return ctx.reply("⚠️ Nilai tidak valid. Gunakan angka 0-100 atau 'off'.");
+    }
+
+    const clamped = clampDiscount(nextValue);
+    const db = await loadDB();
+    db.promo = db.promo || {};
+    db.promo.flashSalePercent = clamped;
+    await saveDB(db);
+    global.flashSaleDiscount = clamped;
+
+    const status = clamped > 0 ? `aktif (${clamped}%)` : "nonaktif";
+    await ctx.reply(`✅ Flash Sale sekarang ${status}.`, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("❌ Error di /flashsale:", err);
+    try { await ctx.reply("❌ Gagal memproses /flashsale, cek log server."); } catch {}
+  }
+});
+
 // === 📦 KIRIM AKUN MANUAL (ADMIN ONLY)
 // Format: /kirim <username/id> code|varian|jumlah
 // Contoh: /kirim @sphynixstore am|iphone|1
@@ -5507,12 +5551,13 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
     `🔹 <b>/kirim</b> — <code>Kirim Manual</code>`,
     `🔹 <b>/saldo</b> — <code>Top up Saldo Manual</code>`
   ].join("\n");
-} else {
+    } else {
       categoryText = [
         `⚙️ <b>MENU SISTEM</b>`,
         `🔹 <b>/adminlist</b> — <code>Lihat Admin</code>`,
         `🔹 <b>/addadmin</b> — <code>Tambah Admin</code>`,
         `🔹 <b>/deladmin</b> — <code>Hapus Admin</code>`,
+        `🔹 <b>/flashsale</b> — <code>Atur Promo</code>`,
         `🔹 <b>/broadcast</b> — <code>Kirim Pesan</code>`,
         `🔹 <b>/setframeqris</b> — <code>Toggle Frame</code>`
       ].join("\n");
