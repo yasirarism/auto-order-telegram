@@ -37,7 +37,7 @@ const settingsPath = path.resolve('settings.js');
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const tz = require("dayjs/plugin/timezone");
-const ValidateTransactions = require("./lib/handler/transactions");
+const { ValidateTransactions, sendOrderLogToChannel } = require("./lib/handler/transactions");
 dayjs.extend(utc);
 dayjs.extend(tz);
 dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
@@ -169,40 +169,110 @@ function rupiah(n = 0) {
   return new Intl.NumberFormat("id-ID").format(n);
 }
 
-function getFlashSaleDiscount() {
-  return Number.isFinite(Number(global.flashSaleDiscount))
-    ? Number(global.flashSaleDiscount)
-    : 0;
+const FLASH_SALE_PATH = path.resolve(__dirname, "data/flashsales.json");
+
+async function loadFlashSales() {
+  try {
+    const data = await readJson(FLASH_SALE_PATH, []);
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error("⚠️ Gagal baca flashsales.json:", e.message);
+    return [];
+  }
 }
 
-function isFlashSaleActive() {
-  return getFlashSaleDiscount() > 0;
+async function saveFlashSales(flashSales) {
+  try {
+    await writeJson(FLASH_SALE_PATH, flashSales);
+  } catch (e) {
+    console.error("⚠️ Gagal simpan flashsales.json:", e.message);
+  }
 }
 
-function clampDiscount(value) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, value));
+function normalizeVariantName(value = "") {
+  return String(value || "").trim().toLowerCase();
 }
 
-function getFlashSalePrice(price) {
-  const base = Number(price || 0);
-  if (!isFlashSaleActive()) return base;
-  const discount = clampDiscount(getFlashSaleDiscount());
-  return Math.max(0, Math.round(base * (100 - discount) / 100));
+function parseFlashSaleTime(value) {
+  const parsed = dayjs.tz(String(value || "").trim(), "YYYY-MM-DD HH:mm", APP_TZ);
+  if (!parsed.isValid()) return null;
+  return parsed.valueOf();
 }
 
-function formatFlashSaleHtml(price) {
-  const base = Number(price || 0);
-  if (!isFlashSaleActive()) return `Rp ${rupiah(base)}`;
-  const discounted = getFlashSalePrice(base);
-  return `Rp ${rupiah(discounted)} <s>Rp ${rupiah(base)}</s>`;
+function calcDiscountPercent(basePrice, salePrice) {
+  const base = Number(basePrice);
+  const sale = Number(salePrice);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  if (!Number.isFinite(sale) || sale < 0 || sale >= base) return 0;
+  return Math.round((1 - sale / base) * 100);
 }
 
-function formatFlashSaleButton(price) {
-  const base = Number(price || 0);
-  if (!isFlashSaleActive()) return `Rp ${rupiah(base)}`;
-  const discounted = getFlashSalePrice(base);
+function getActiveFlashSale(flashSales, productId, variantName, now = nowTZ()) {
+  const pid = String(productId ?? "");
+  const vname = normalizeVariantName(variantName);
+  const nowMs = now.valueOf();
+  const matches = (flashSales || []).filter(
+    (sale) =>
+      String(sale.productId ?? "") === pid &&
+      normalizeVariantName(sale.variantName) === vname &&
+      Number(sale.startAt) <= nowMs &&
+      nowMs <= Number(sale.endAt)
+  );
+  if (!matches.length) return null;
+  return matches.reduce((best, item) => {
+    const bestPrice = Number(best.price);
+    const nextPrice = Number(item.price);
+    if (!Number.isFinite(bestPrice)) return item;
+    if (Number.isFinite(nextPrice) && nextPrice < bestPrice) return item;
+    return best;
+  }, matches[0]);
+}
+
+function getFlashSaleInfo(flashSales, product, variant, now = nowTZ()) {
+  const basePrice = Number(variant?.price || 0);
+  const activeSale = getActiveFlashSale(
+    flashSales,
+    product?.id,
+    variant?.name,
+    now
+  );
+  if (!activeSale) {
+    return { active: false, price: basePrice, discountPercent: 0 };
+  }
+  const salePrice = Number(activeSale.price);
+  const discountPercent = calcDiscountPercent(basePrice, salePrice);
+  return {
+    active: Number.isFinite(salePrice),
+    price: Number.isFinite(salePrice) ? salePrice : basePrice,
+    discountPercent,
+    startAt: activeSale.startAt,
+    endAt: activeSale.endAt,
+  };
+}
+
+function formatPriceHtml(basePrice, flashSaleInfo) {
+  const base = Number(basePrice || 0);
+  if (!flashSaleInfo?.active) return `Rp ${rupiah(base)}`;
+  const discounted = Number(flashSaleInfo.price);
+  const percent = flashSaleInfo.discountPercent || 0;
+  const percentLabel = percent > 0 ? ` (-${percent}%)` : "";
+  return `Rp ${rupiah(discounted)} <s>Rp ${rupiah(base)}</s>${percentLabel}`;
+}
+
+function formatPriceButton(basePrice, flashSaleInfo) {
+  const base = Number(basePrice || 0);
+  if (!flashSaleInfo?.active) return `Rp ${rupiah(base)}`;
+  const discounted = Number(flashSaleInfo.price);
   return `Rp ${rupiah(discounted)}🔥`;
+}
+
+function getProductFlashSaleBadge(flashSales, product, now = nowTZ()) {
+  const infos = (product?.variants || [])
+    .map((variant) => getFlashSaleInfo(flashSales, product, variant, now))
+    .filter((info) => info.active && info.discountPercent > 0);
+  if (!infos.length) return null;
+  const maxDiscount = Math.max(...infos.map((info) => info.discountPercent));
+  return `Flash Sale ${maxDiscount}%`;
 }
 
 function saldoLabel(balance = 0) {
@@ -574,8 +644,6 @@ bot.start(async (ctx) => {
 
   if (!db.users) db.users = {};
   if (!db.stats) db.stats = { totalUsers: 0 };
-  if (!db.promo) db.promo = { flashSalePercent: 0 };
-  global.flashSaleDiscount = clampDiscount(db.promo.flashSalePercent || 0);
 
   global.dbCache = db; 
 
@@ -730,25 +798,31 @@ bot.hears('🧾 List Produk', async (ctx) => {
   const bannerPath = INFO_BANNER_PATH;
 
   // 🔄 AUTO LOAD PRODUK DARI DATABASE
-  let PRODUCTS = [];
+  let products = [];
   try {
-    const data = await loadProducts();
-    PRODUCTS = data.map((p) => p.name.toUpperCase());
+    products = await loadProducts();
   } catch (err) {
     console.error("❌ Gagal membaca products:", err);
   }
+
+  const flashSales = await loadFlashSales();
+  const now = nowTZ();
 
   const listText = [
     `<b>📦 LIST PRODUK</b>`,
     `<i>page 1 / 1</i>`,
     `━━━━━━━━━━━━━━━━━━━`,
-    ...PRODUCTS.map((p, i) => `[${i + 1}] ${p}`),
+    ...products.map((p) => {
+      const badge = getProductFlashSaleBadge(flashSales, p, now);
+      const badgeText = badge ? ` — 🔥 ${badge}` : "";
+      return `[${p.id}] ${String(p.name || "-").toUpperCase()}${badgeText}`;
+    }),
     `━━━━━━━━━━━━━━━━━━━`,
     `This bot is proudly created by\n© ${STORE_NICKNAME} 2025`
   ].join('\n');
 
 // 🧮 Generate keyboard dinamis sesuai jumlah produk
-const productButtons = PRODUCTS.map((_, i) => String(i + 1));
+const productButtons = products.map((p) => String(p.id));
 const rows = [];
 for (let i = 0; i < productButtons.length; i += 6) {
   rows.push(productButtons.slice(i, i + 6));
@@ -775,12 +849,6 @@ if (fs.existsSync(bannerPath)) {
 // === 🔥 FLASH SALE MENU ===
 bot.hears('🔥 Flash Sale', async (ctx) => {
   ctx.session = ctx.session || {};
-  if (!isFlashSaleActive()) {
-    ctx.session.flashSale = false;
-    return ctx.reply("⚠️ Flash Sale belum aktif saat ini.");
-  }
-  ctx.session.flashSale = true;
-
   const chatId = String(ctx.chat.id);
   const db = await loadDB();
   const me = db.users[chatId] || { balance: 0 };
@@ -793,17 +861,30 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
     console.error("❌ Gagal membaca products:", err);
   }
 
-  const discountLabel = clampDiscount(getFlashSaleDiscount());
+  const flashSales = await loadFlashSales();
+  const now = nowTZ();
+  const flashSaleProducts = products.filter((product) =>
+    Boolean(getProductFlashSaleBadge(flashSales, product, now))
+  );
+
+  if (!flashSaleProducts.length) {
+    ctx.session.flashSale = false;
+    return ctx.reply("⚠️ Flash Sale belum aktif saat ini.");
+  }
+
   const listText = [
     `<b>🔥 FLASH SALE</b>`,
-    `<i>Diskon ${discountLabel}% untuk semua produk</i>`,
     `━━━━━━━━━━━━━━━━━━━`,
-    ...products.map((p, i) => `[${i + 1}] ${p.name?.toUpperCase?.() || '-'}`),
+    ...flashSaleProducts.map((p) => {
+      const badge = getProductFlashSaleBadge(flashSales, p, now);
+      const badgeText = badge ? ` — 🔥 ${badge}` : "";
+      return `[${p.id}] ${p.name?.toUpperCase?.() || '-'}${badgeText}`;
+    }),
     `━━━━━━━━━━━━━━━━━━━`,
     `Pilih nomor produk untuk melihat detail promo.`
   ].join('\n');
 
-  const productButtons = products.map((_, i) => String(i + 1));
+  const productButtons = flashSaleProducts.map((p) => String(p.id));
   const rows = [];
   for (let i = 0; i < productButtons.length; i += 6) {
     rows.push(productButtons.slice(i, i + 6));
@@ -3431,7 +3512,7 @@ bot.command("cekid", async (ctx) => {
 });
 
 // === 🔥 FLASH SALE CONTROL (ADMIN ONLY)
-// Format: /flashsale <persen|off>
+// Format: /flashsale <product_id>|<varian>|<mulai>|<selesai>|<harga>
 bot.command("flashsale", async (ctx) => {
   try {
     if (!isAdmin(ctx.from.id)) return ctx.reply("🚫 Kamu bukan admin.");
@@ -3439,30 +3520,159 @@ bot.command("flashsale", async (ctx) => {
 
     const arg = (ctx.message?.text || "").split(" ").slice(1).join(" ").trim();
     if (!arg) {
-      const current = clampDiscount(getFlashSaleDiscount());
       return ctx.reply(
-        `⚙️ Flash Sale saat ini: <b>${current}%</b>\n` +
-        `Gunakan: /flashsale <persen|off>\n` +
-        `Contoh: /flashsale 20`,
+        `⚙️ Format Flash Sale:\n` +
+        `<code>/flashsale &lt;product_id&gt;|&lt;varian&gt;|&lt;mulai&gt;|&lt;selesai&gt;|&lt;harga&gt;</code>\n` +
+        `Format waktu: <b>YYYY-MM-DD HH:mm</b> (${tzLabel()})\n` +
+        `Contoh: <code>/flashsale 3|Basic|2025-03-10 09:00|2025-03-10 23:00|15000</code>\n\n` +
+        `Hapus: <code>/flashsale del &lt;product_id&gt;|&lt;varian&gt;</code>\n` +
+        `Matikan semua: <code>/flashsale off</code>\n` +
+        `Lihat list: <code>/flashsale list</code>`,
         { parse_mode: "HTML" }
       );
     }
 
     const input = arg.toLowerCase();
-    const nextValue = input === "off" ? 0 : Number(input);
-    if (!Number.isFinite(nextValue)) {
-      return ctx.reply("⚠️ Nilai tidak valid. Gunakan angka 0-100 atau 'off'.");
+
+    if (input === "off") {
+      await saveFlashSales([]);
+      return ctx.reply("✅ Semua Flash Sale telah dimatikan.", { parse_mode: "HTML" });
     }
 
-    const clamped = clampDiscount(nextValue);
-    const db = await loadDB();
-    db.promo = db.promo || {};
-    db.promo.flashSalePercent = clamped;
-    await saveDB(db);
-    global.flashSaleDiscount = clamped;
+    if (input === "list") {
+      const flashSales = await loadFlashSales();
+      if (!flashSales.length) {
+        return ctx.reply("📭 Belum ada Flash Sale yang terdaftar.");
+      }
+      const products = await loadProducts();
+      const prodIndex = Object.fromEntries(products.map((p) => [String(p.id), p]));
 
-    const status = clamped > 0 ? `aktif (${clamped}%)` : "nonaktif";
-    await ctx.reply(`✅ Flash Sale sekarang ${status}.`, { parse_mode: "HTML" });
+      const rows = flashSales.map((sale, i) => {
+        const product = prodIndex[String(sale.productId)];
+        const productName = product?.name || `ID ${sale.productId}`;
+        const startAt = dayjs(Number(sale.startAt)).tz(APP_TZ).format("DD MMM YYYY HH:mm");
+        const endAt = dayjs(Number(sale.endAt)).tz(APP_TZ).format("DD MMM YYYY HH:mm");
+        return [
+          `${i + 1}. ${productName}`,
+          `   ├ Varian: ${sale.variantName}`,
+          `   ├ Harga: Rp ${rupiah(sale.price)}`,
+          `   └ Waktu: ${startAt} - ${endAt} ${tzLabel()}`,
+        ].join("\n");
+      });
+
+      return ctx.reply(
+        [`<b>🔥 DAFTAR FLASH SALE</b>`, ``, ...rows].join("\n"),
+        { parse_mode: "HTML" }
+      );
+    }
+
+    if (input.startsWith("del ")) {
+      const spec = arg.slice(4).trim();
+      if (!spec.includes("|")) {
+        return ctx.reply(
+          "⚠️ Format salah!\nGunakan: /flashsale del <product_id>|<varian>"
+        );
+      }
+      const [productIdRaw, variantRaw] = spec.split("|").map((v) => v.trim());
+      const productId = Number(productIdRaw);
+      if (!Number.isFinite(productId)) {
+        return ctx.reply("⚠️ ID produk tidak valid.");
+      }
+      const flashSales = await loadFlashSales();
+      const before = flashSales.length;
+      const next = flashSales.filter(
+        (sale) =>
+          String(sale.productId) !== String(productId) ||
+          normalizeVariantName(sale.variantName) !== normalizeVariantName(variantRaw)
+      );
+      await saveFlashSales(next);
+      if (before === next.length) {
+        return ctx.reply("⚠️ Flash Sale tidak ditemukan untuk produk/varian tersebut.");
+      }
+      return ctx.reply("✅ Flash Sale berhasil dihapus.");
+    }
+
+    if (!arg.includes("|")) {
+      return ctx.reply(
+        "⚠️ Format salah!\nGunakan: /flashsale <product_id>|<varian>|<mulai>|<selesai>|<harga>"
+      );
+    }
+
+    const [productIdRaw, variantRaw, startRaw, endRaw, priceRaw] = arg
+      .split("|")
+      .map((v) => v.trim());
+
+    const productId = Number(productIdRaw);
+    if (!Number.isFinite(productId)) {
+      return ctx.reply("⚠️ ID produk tidak valid.");
+    }
+
+    const products = await loadProducts();
+    const product = products.find((p) => Number(p.id) === productId);
+    if (!product) {
+      return ctx.reply(`⚠️ Produk dengan ID ${productId} tidak ditemukan.`);
+    }
+
+    const variant = (product.variants || []).find(
+      (v) => normalizeVariantName(v.name) === normalizeVariantName(variantRaw)
+    );
+    if (!variant) {
+      return ctx.reply(`⚠️ Varian "${variantRaw}" tidak ditemukan di produk ${product.name}.`);
+    }
+
+    const startAt = parseFlashSaleTime(startRaw);
+    const endAt = parseFlashSaleTime(endRaw);
+    if (!startAt || !endAt) {
+      return ctx.reply(
+        `⚠️ Format waktu tidak valid. Gunakan YYYY-MM-DD HH:mm (${tzLabel()}).`
+      );
+    }
+
+    if (startAt >= endAt) {
+      return ctx.reply("⚠️ Waktu mulai harus lebih awal dari waktu selesai.");
+    }
+
+    const salePrice = Number(priceRaw);
+    if (!Number.isFinite(salePrice) || salePrice <= 0) {
+      return ctx.reply("⚠️ Harga flash sale tidak valid.");
+    }
+
+    if (salePrice >= Number(variant.price)) {
+      return ctx.reply("⚠️ Harga flash sale harus lebih murah dari harga normal.");
+    }
+
+    const flashSales = await loadFlashSales();
+    const nextFlashSales = [
+      ...flashSales.filter(
+        (sale) =>
+          String(sale.productId) !== String(productId) ||
+          normalizeVariantName(sale.variantName) !== normalizeVariantName(variant.name)
+      ),
+      {
+        productId,
+        variantName: variant.name,
+        startAt,
+        endAt,
+        price: salePrice,
+      },
+    ];
+
+    await saveFlashSales(nextFlashSales);
+
+    const discountPercent = calcDiscountPercent(variant.price, salePrice);
+    const startLabel = dayjs(startAt).tz(APP_TZ).format("DD MMM YYYY HH:mm");
+    const endLabel = dayjs(endAt).tz(APP_TZ).format("DD MMM YYYY HH:mm");
+
+    await ctx.reply(
+      [
+        `✅ Flash Sale tersimpan!`,
+        `Produk : <b>${product.name}</b> (ID ${productId})`,
+        `Varian : <b>${variant.name}</b>`,
+        `Harga : <b>Rp ${rupiah(salePrice)}</b> (-${discountPercent}%)`,
+        `Waktu : <b>${startLabel} - ${endLabel} ${tzLabel()}</b>`,
+      ].join("\n"),
+      { parse_mode: "HTML" }
+    );
   } catch (err) {
     console.error("❌ Error di /flashsale:", err);
     try { await ctx.reply("❌ Gagal memproses /flashsale, cek log server."); } catch {}
@@ -4096,15 +4306,18 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
   const product = products.find(p => p.id === index);
   if (!product) return ctx.reply("⚠️ Produk tidak ditemukan!");
 
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const flashSales = await loadFlashSales();
+  const nowMoment = nowTZ();
+  const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
+  const flashSaleBadge = getProductFlashSaleBadge(flashSales, product, nowMoment);
   const variantList = product.variants.map(v => {
-    const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+    const flashInfo = getFlashSaleInfo(flashSales, product, v, nowMoment);
+    const priceText = formatPriceHtml(v.price, flashInfo);
     return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
   }).join('\n');
 
   const text = [
-    isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
+    flashSaleBadge ? `🔥 <b>${flashSaleBadge}</b>` : null,
     `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
@@ -4126,7 +4339,8 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
     const v2 = product.variants[i + 1];
 
     if (v1) {
-      const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+      const v1FlashInfo = getFlashSaleInfo(flashSales, product, v1, nowMoment);
+      const v1PriceText = formatPriceButton(v1.price, v1FlashInfo);
       const v1Text = `${v1.name} - ${v1PriceText}‎`;
       row.push(
         v1.stock > 0
@@ -4136,7 +4350,8 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
     }
 
     if (v2) {
-      const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+      const v2FlashInfo = getFlashSaleInfo(flashSales, product, v2, nowMoment);
+      const v2PriceText = formatPriceButton(v2.price, v2FlashInfo);
       const v2Text = `${v2.name} - ${v2PriceText}‎`;
       row.push(
         v2.stock > 0
@@ -4172,9 +4387,7 @@ try {
   }
 
 // 🧩 Simpan message aktif biar bisa dihapus/track nanti
-if (!isFlashSale) {
   await trackSentProduct(ctx, product, sentMsg, false); // false = ini pesan produk, bukan transaksi
-}
 } catch (err) {
   console.error("❌ Gagal kirim produk:", err);
   await ctx.reply(text, {
@@ -4221,6 +4434,8 @@ bot.on("callback_query", async (ctx, next) => {
 
     const msg = ctx.callbackQuery.message;
     const products = await loadProducts();
+    const flashSales = await loadFlashSales();
+    const nowMoment = nowTZ();
 
     const editCaptionSafe = async (ctx, text, keyboard) => {
       try {
@@ -4265,13 +4480,14 @@ if (data.startsWith("pay_qris_")) {
   const variant = product.variants.find((v) => v.name === variantName);
   if (!variant) return ctx.answerCbQuery("❌ Varian tidak ditemukan");
 
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
-  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const flashSales = await loadFlashSales();
+  const flashInfo = getFlashSaleInfo(flashSales, product, variant);
+  const unitPrice = flashInfo.price;
   const total = unitPrice * jumlah;
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const now = nowTZ().format(`HH.mm.ss [${tzLabel()}]`);
 
   const text = [
-    `<b>${isFlashSale ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
+    `<b>${flashInfo.active ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
@@ -4337,6 +4553,7 @@ if (data.startsWith("refresh_")) {
     const products = await loadProducts();
     const product = products.find((p) => p.id === pid);
     if (!product) return ctx.answerCbQuery("⚠️ Produk tidak ditemukan!");
+    const flashSales = await loadFlashSales();
 
     // 💡 ambil berdasarkan CODE (bukan ID)
     const code = product.code?.toLowerCase();
@@ -4396,7 +4613,8 @@ if (data.startsWith("refresh_")) {
       console.warn(`⚠️ File stok tidak ditemukan: ${stokPath}\n`);
     }
 
-    const now = dayjs().tz().format("HH.mm.ss [WIB]");
+    const nowMoment = nowTZ();
+    const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
     const msg = ctx.callbackQuery.message;
     const caption = msg.caption || msg.text || "";
     const isOrder = caption.includes("KONFIRMASI PESANAN");
@@ -4421,7 +4639,6 @@ if (data.startsWith("refresh_")) {
 
     // === 🛒 Tampilan Konfirmasi Pesanan ===
     if (isOrder) {
-      const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
       const variantName =
         caption.match(/Varian:\s(.+)/)?.[1]?.trim() ||
         product.variants[0].name;
@@ -4430,15 +4647,16 @@ if (data.startsWith("refresh_")) {
         parseInt(caption.match(/Jumlah Pesanan:\s*x(\d+)/i)?.[1] || "1") || 1;
 
       const variant = product.variants.find((v) => v.name === variantName);
-      const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+      const flashInfo = getFlashSaleInfo(flashSales, product, variant, nowMoment);
+      const unitPrice = flashInfo.price;
       const total = unitPrice * jumlah;
 
       const text = [
-        `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
+        `<b>${flashInfo.active ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
         `╭──────────────────────╮`,
         `├ <b>Produk:</b> ${product.name}`,
         `├ <b>Varian:</b> ${variant.name}`,
-        `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
+        `├ <b>Harga satuan:</b> ${formatPriceHtml(variant.price, flashInfo)}`,
         `├ <b>Stok tersedia:</b> ${variant.stock}`,
         `╰──────────────────────╯`,
         ``,
@@ -4501,16 +4719,17 @@ if (data.startsWith("refresh_")) {
     }
 
     // === tampilan produk biasa ===
-    const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
     const variantList = product.variants
       .map((v) => {
-        const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+        const flashInfo = getFlashSaleInfo(flashSales, product, v, nowMoment);
+        const priceText = formatPriceHtml(v.price, flashInfo);
         return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
       })
       .join("\n");
 
+    const flashSaleBadge = getProductFlashSaleBadge(flashSales, product, nowMoment);
     const text = [
-      isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
+      flashSaleBadge ? `🔥 <b>${flashSaleBadge}</b>` : null,
       `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
@@ -4533,7 +4752,8 @@ if (data.startsWith("refresh_")) {
       const v2 = product.variants[i + 1];
 
       if (v1) {
-        const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+        const v1FlashInfo = getFlashSaleInfo(flashSales, product, v1, nowMoment);
+        const v1PriceText = formatPriceButton(v1.price, v1FlashInfo);
         const v1Text = `${v1.name} - ${v1PriceText}‎`;
         row.push(
           v1.stock > 0
@@ -4543,7 +4763,8 @@ if (data.startsWith("refresh_")) {
       }
 
       if (v2) {
-        const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+        const v2FlashInfo = getFlashSaleInfo(flashSales, product, v2, nowMoment);
+        const v2PriceText = formatPriceButton(v2.price, v2FlashInfo);
         const v2Text = `${v2.name} - ${v2PriceText}‎`;
         row.push(
           v2.stock > 0
@@ -4599,18 +4820,18 @@ if (data.startsWith("buy_")) {
   const [_, pid, variantName] = data.split("_");
   const product = products.find((p) => String(p.id) === pid);
   const variant = product.variants.find((v) => v.name === variantName);
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
   const jumlah = 1;
-  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const flashInfo = getFlashSaleInfo(flashSales, product, variant, nowMoment);
+  const unitPrice = flashInfo.price;
   const total = unitPrice * jumlah;
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
 
   const text = [
-    `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
+    `<b>${flashInfo.active ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
-    `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
+    `├ <b>Harga satuan:</b> ${formatPriceHtml(variant.price, flashInfo)}`,
     `├ <b>Stok tersedia:</b> ${variant.stock}`,
     `╰──────────────────────╯`,
     ``,
@@ -4658,7 +4879,6 @@ if (data.startsWith("inc_") || data.startsWith("dec_")) {
   const [action, pid, variantName] = data.split("_");
   const product = products.find((p) => String(p.id) === pid);
   const variant = product.variants.find((v) => v.name === variantName);
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
 
   const caption = msg.caption || msg.text || "";
   const jumlahMatch = caption.match(/Jumlah Pesanan:\s*x(\d+)/i);
@@ -4667,16 +4887,17 @@ if (data.startsWith("inc_") || data.startsWith("dec_")) {
   if (action === "inc" && jumlah < variant.stock) jumlah++;
   if (action === "dec" && jumlah > 1) jumlah--;
 
-  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const flashInfo = getFlashSaleInfo(flashSales, product, variant, nowMoment);
+  const unitPrice = flashInfo.price;
   const total = unitPrice * jumlah;
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
 
   const text = [
-    `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
+    `<b>${flashInfo.active ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
-    `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
+    `├ <b>Harga satuan:</b> ${formatPriceHtml(variant.price, flashInfo)}`,
     `├ <b>Stok tersedia:</b> ${variant.stock}`,
     `╰──────────────────────╯`,
     ``,
@@ -4758,14 +4979,14 @@ if (data.startsWith("pay_saldo_")) {
     return ctx.answerCbQuery("⚠️ Kamu belum terdaftar, ketik /start dulu!");
 
   // 💰 Hitung total sesuai jumlah pesanan
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
-  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const flashInfo = getFlashSaleInfo(flashSales, product, variant, nowMoment);
+  const unitPrice = flashInfo.price;
   const total = unitPrice * jumlah;
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
 
   // Step konfirmasi
   const text = [
-    `<b>${isFlashSale ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
+    `<b>${flashInfo.active ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
@@ -4849,8 +5070,8 @@ if (data.startsWith("confirm_pay_")) {
       return ctx.answerCbQuery("⚠️ Kamu belum terdaftar, ketik /start dulu!");
 
     // 💰 Hitung total sesuai jumlah
-    const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
-    const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+    const flashInfo = getFlashSaleInfo(flashSales, product, variant, nowMoment);
+    const unitPrice = flashInfo.price;
     const total = unitPrice * jumlah;
     if (user.balance < total)
       return ctx.answerCbQuery("❌ Saldo tidak cukup!");
@@ -4926,7 +5147,7 @@ if (data.startsWith("confirm_pay_")) {
       username: user.username || ctx.from?.username || "-",
       product: product.name,
       variant: variant.name,
-      price: variant.price,
+      price: unitPrice,
       qty: jumlah,
       total: total,
       method: "saldo",
@@ -4937,6 +5158,23 @@ if (data.startsWith("confirm_pay_")) {
 
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
+
+    await sendOrderLogToChannel(bot, {
+      channelId: process.env.ORDER_LOG_CHANNEL,
+      txRef: txId,
+      orderRef: txId,
+      userId: String(ctx.chat.id),
+      username: user.username || ctx.from?.username || "-",
+      buyerName: user.first_name || user.username || "-",
+      product: { code: product.code || "-", name: product.name },
+      variantName: variant.name,
+      qty: jumlah,
+      delivered: akunDataList.length,
+      totalAmount: total,
+      paymentMethod: "saldo",
+      createdAt: nowFull,
+      accounts: akunDataList,
+    });
 
     // === 📨 Kirim pesan hasil pembayaran ===
     const now = dayjs().tz().format("HH.mm.ss [WIB]");
@@ -5130,18 +5368,19 @@ if (data.startsWith("back_")) {
   const product = products.find((p) => p.id === pid);
   if (!product) return ctx.answerCbQuery("❌ Produk tidak ditemukan");
 
-  const now = dayjs().tz().format("HH.mm.ss [WIB]");
-  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
+  const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
   const variantList = product.variants
     .map((v) => {
-      const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+      const flashInfo = getFlashSaleInfo(flashSales, product, v, nowMoment);
+      const priceText = formatPriceHtml(v.price, flashInfo);
       return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
     })
     .join("\n");
 
+  const flashSaleBadge = getProductFlashSaleBadge(flashSales, product, nowMoment);
   // tambahin sedikit penanda waktu agar Telegram anggap teks berubah
   const text = [
-    isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
+    flashSaleBadge ? `🔥 <b>${flashSaleBadge}</b>` : null,
     `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
@@ -5164,7 +5403,8 @@ if (data.startsWith("back_")) {
     const v2 = product.variants[i + 1];
 
     if (v1) {
-      const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+      const v1FlashInfo = getFlashSaleInfo(flashSales, product, v1, nowMoment);
+      const v1PriceText = formatPriceButton(v1.price, v1FlashInfo);
       const v1Text = `${v1.name} - ${v1PriceText}‎`;
       row.push(
         v1.stock > 0
@@ -5174,7 +5414,8 @@ if (data.startsWith("back_")) {
     }
 
     if (v2) {
-      const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+      const v2FlashInfo = getFlashSaleInfo(flashSales, product, v2, nowMoment);
+      const v2PriceText = formatPriceButton(v2.price, v2FlashInfo);
       const v2Text = `${v2.name} - ${v2PriceText}‎`;
       row.push(
         v2.stock > 0
@@ -5421,12 +5662,20 @@ bot.action(/^cancel_confirm_(\d+)$/, async (ctx) => {
     const product = products.find(p => String(p.id) === String(pid));
     if (!product) { await ctx.answerCbQuery('Produk tidak ditemukan'); return; }
 
-    const now = dayjs().tz().format("HH.mm.ss [WIB]");
+    const flashSales = await loadFlashSales();
+    const nowMoment = nowTZ();
+    const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
     const variantList = (product.variants || [])
-      .map(v => `• ${v.name}: <b>Rp ${rupiah(v.price)}</b> - Stok: ${v.stock}`)
+      .map((v) => {
+        const flashInfo = getFlashSaleInfo(flashSales, product, v, nowMoment);
+        const priceText = formatPriceHtml(v.price, flashInfo);
+        return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
+      })
       .join("\n");
 
+    const flashSaleBadge = getProductFlashSaleBadge(flashSales, product, nowMoment);
     const text = [
+      flashSaleBadge ? `🔥 <b>${flashSaleBadge}</b>` : null,
       `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
@@ -5439,7 +5688,7 @@ bot.action(/^cancel_confirm_(\d+)$/, async (ctx) => {
       variantList,
       ``,
       `🔄 <i>Refresh at ${now}</i>`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
     // susun tombol varian 2 kolom seperti biasa
     const variantButtons = [];
@@ -5448,12 +5697,14 @@ bot.action(/^cancel_confirm_(\d+)$/, async (ctx) => {
       const v1 = product.variants[i];
       const v2 = product.variants[i + 1];
       if (v1) {
-        const t = `${v1.name} - Rp ${rupiah(v1.price)}‎`;
+        const v1FlashInfo = getFlashSaleInfo(flashSales, product, v1, nowMoment);
+        const t = `${v1.name} - ${formatPriceButton(v1.price, v1FlashInfo)}‎`;
         row.push(v1.stock > 0 ? { text: t, callback_data: `buy_${product.id}_${v1.name}` }
                               : { text: `🚫 ${t}`, callback_data: "noop" });
       }
       if (v2) {
-        const t = `${v2.name} - Rp ${rupiah(v2.price)}‎`;
+        const v2FlashInfo = getFlashSaleInfo(flashSales, product, v2, nowMoment);
+        const t = `${v2.name} - ${formatPriceButton(v2.price, v2FlashInfo)}‎`;
         row.push(v2.stock > 0 ? { text: t, callback_data: `buy_${product.id}_${v2.name}` }
                               : { text: `🚫 ${t}`, callback_data: "noop" });
       }
@@ -5557,7 +5808,7 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
         `🔹 <b>/adminlist</b> — <code>Lihat Admin</code>`,
         `🔹 <b>/addadmin</b> — <code>Tambah Admin</code>`,
         `🔹 <b>/deladmin</b> — <code>Hapus Admin</code>`,
-        `🔹 <b>/flashsale</b> — <code>Atur Promo</code>`,
+        `🔹 <b>/flashsale</b> — <code>Atur Flash Sale (produk/varian/waktu/harga)</code>`,
         `🔹 <b>/broadcast</b> — <code>Kirim Pesan</code>`,
         `🔹 <b>/setframeqris</b> — <code>Toggle Frame</code>`
       ].join("\n");
@@ -6488,7 +6739,9 @@ setInterval(async () => {
     });
 
     if (changedProducts.length > 0) {
-      const now = dayjs().tz().format("HH.mm.ss [WIB]");
+      const flashSales = await loadFlashSales();
+      const nowMoment = nowTZ();
+      const now = nowMoment.format(`HH.mm.ss [${tzLabel()}]`);
 
       for (const product of changedProducts) {
         const freshData = await loadProducts();
@@ -6496,13 +6749,16 @@ setInterval(async () => {
         if (!freshProduct) continue;
 
         const variantList = freshProduct.variants
-          .map(
-            (v) =>
-              `• ${v.name}: <b>Rp ${rupiah(v.price)}</b> - Stok: ${v.stock}`
-          )
+          .map((v) => {
+            const flashInfo = getFlashSaleInfo(flashSales, freshProduct, v, nowMoment);
+            const priceText = formatPriceHtml(v.price, flashInfo);
+            return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
+          })
           .join("\n");
 
+        const flashSaleBadge = getProductFlashSaleBadge(flashSales, freshProduct, nowMoment);
         const caption = [
+          flashSaleBadge ? `🔥 <b>${flashSaleBadge}</b>` : null,
           `${STORE_NICKNAME} PREMIUM APPS`,
           `╭──────────────────────╮`,
           `├ <b>Produk:</b> ${freshProduct.name}`,
@@ -6514,7 +6770,7 @@ setInterval(async () => {
           variantList,
           ``,
           `⚡ <i>Auto-sync at ${now}</i>`,
-        ].join("\n");
+        ].filter(Boolean).join("\n");
 
         const variantButtons = [];
         for (let i = 0; i < freshProduct.variants.length; i += 2) {
@@ -6522,7 +6778,8 @@ setInterval(async () => {
           const v1 = freshProduct.variants[i];
           const v2 = freshProduct.variants[i + 1];
           if (v1) {
-            const text = `${v1.name} - Rp ${rupiah(v1.price)}`;
+            const v1FlashInfo = getFlashSaleInfo(flashSales, freshProduct, v1, nowMoment);
+            const text = `${v1.name} - ${formatPriceButton(v1.price, v1FlashInfo)}`;
             row.push({
               text: v1.stock > 0 ? text : `🚫 ${text}`,
               callback_data:
@@ -6530,7 +6787,8 @@ setInterval(async () => {
             });
           }
           if (v2) {
-            const text = `${v2.name} - Rp ${rupiah(v2.price)}`;
+            const v2FlashInfo = getFlashSaleInfo(flashSales, freshProduct, v2, nowMoment);
+            const text = `${v2.name} - ${formatPriceButton(v2.price, v2FlashInfo)}`;
             row.push({
               text: v2.stock > 0 ? text : `🚫 ${text}`,
               callback_data:
