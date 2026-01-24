@@ -169,6 +169,42 @@ function rupiah(n = 0) {
   return new Intl.NumberFormat("id-ID").format(n);
 }
 
+function getFlashSaleDiscount() {
+  return Number.isFinite(Number(global.flashSaleDiscount))
+    ? Number(global.flashSaleDiscount)
+    : 0;
+}
+
+function isFlashSaleActive() {
+  return getFlashSaleDiscount() > 0;
+}
+
+function clampDiscount(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+function getFlashSalePrice(price) {
+  const base = Number(price || 0);
+  if (!isFlashSaleActive()) return base;
+  const discount = clampDiscount(getFlashSaleDiscount());
+  return Math.max(0, Math.round(base * (100 - discount) / 100));
+}
+
+function formatFlashSaleHtml(price) {
+  const base = Number(price || 0);
+  if (!isFlashSaleActive()) return `Rp ${rupiah(base)}`;
+  const discounted = getFlashSalePrice(base);
+  return `Rp ${rupiah(discounted)} <s>Rp ${rupiah(base)}</s>`;
+}
+
+function formatFlashSaleButton(price) {
+  const base = Number(price || 0);
+  if (!isFlashSaleActive()) return `Rp ${rupiah(base)}`;
+  const discounted = getFlashSalePrice(base);
+  return `Rp ${rupiah(discounted)}🔥`;
+}
+
 function saldoLabel(balance = 0) {
   return `💰 Saldo Rp ${rupiah(balance)}`;
 }
@@ -518,6 +554,8 @@ bot.action("broadcast_confirm", async (ctx) => {
 
 // === /start Command (fixed + optimized ringan) ===
 bot.start(async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.flashSale = false;
   const chatId = String(ctx.chat.id);
   const user = ctx.from;
 
@@ -536,6 +574,8 @@ bot.start(async (ctx) => {
 
   if (!db.users) db.users = {};
   if (!db.stats) db.stats = { totalUsers: 0 };
+  if (!db.promo) db.promo = { flashSalePercent: 0 };
+  global.flashSaleDiscount = clampDiscount(db.promo.flashSalePercent || 0);
 
   global.dbCache = db; 
 
@@ -627,9 +667,9 @@ bot.start(async (ctx) => {
 
   // 🎛️ Keyboard utama
   const keyboard = Markup.keyboard([
-    ['🧾 List Produk', '🛒 Stock'],
-    [saldoLabel(me.balance), '📜 Riwayat Transaksi'],
-    ['❓ Cara Order']
+    ['🧾 List Produk', '🔥 Flash Sale'],
+    ['🛒 Stock', saldoLabel(me.balance)],
+    ['📜 Riwayat Transaksi', '❓ Cara Order']
   ]).resize();
 
     const bannerPath = INFO_BANNER_PATH;
@@ -649,6 +689,8 @@ bot.start(async (ctx) => {
 
 // === 🧾 MENU LIST PRODUK (Page 1 / 1 + efek loading bar animasi fix) ===
 bot.hears('🧾 List Produk', async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.flashSale = false;
   const chatId = String(ctx.chat.id);
   const db = await loadDB();
   const me = db.users[chatId] || { balance: 0 };
@@ -714,9 +756,10 @@ for (let i = 0; i < productButtons.length; i += 6) {
 
 // 🎛️ Keyboard utama
 const keyboard = Markup.keyboard([
-  ['🧾 List Produk', '🛒 Stock'],
+  ['🧾 List Produk', '🔥 Flash Sale'],
+  ['🛒 Stock', saldoLabel(me.balance)],
   ...rows,
-  [saldoLabel(me.balance), '📜 Riwayat Transaksi']
+  ['📜 Riwayat Transaksi']
 ]).resize();
 
 if (fs.existsSync(bannerPath)) {
@@ -724,9 +767,63 @@ if (fs.existsSync(bannerPath)) {
     { source: bannerPath },
     { caption: listText, parse_mode: 'HTML', ...keyboard }
   );
-} else {
-  await ctx.reply(listText, { parse_mode: 'HTML', ...keyboard });
-}
+  } else {
+    await ctx.reply(listText, { parse_mode: 'HTML', ...keyboard });
+  }
+});
+
+// === 🔥 FLASH SALE MENU ===
+bot.hears('🔥 Flash Sale', async (ctx) => {
+  ctx.session = ctx.session || {};
+  if (!isFlashSaleActive()) {
+    ctx.session.flashSale = false;
+    return ctx.reply("⚠️ Flash Sale belum aktif saat ini.");
+  }
+  ctx.session.flashSale = true;
+
+  const chatId = String(ctx.chat.id);
+  const db = await loadDB();
+  const me = db.users[chatId] || { balance: 0 };
+
+  const bannerPath = INFO_BANNER_PATH;
+  let products = [];
+  try {
+    products = await loadProducts();
+  } catch (err) {
+    console.error("❌ Gagal membaca products:", err);
+  }
+
+  const discountLabel = clampDiscount(getFlashSaleDiscount());
+  const listText = [
+    `<b>🔥 FLASH SALE</b>`,
+    `<i>Diskon ${discountLabel}% untuk semua produk</i>`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ...products.map((p, i) => `[${i + 1}] ${p.name?.toUpperCase?.() || '-'}`),
+    `━━━━━━━━━━━━━━━━━━━`,
+    `Pilih nomor produk untuk melihat detail promo.`
+  ].join('\n');
+
+  const productButtons = products.map((_, i) => String(i + 1));
+  const rows = [];
+  for (let i = 0; i < productButtons.length; i += 6) {
+    rows.push(productButtons.slice(i, i + 6));
+  }
+
+  const keyboard = Markup.keyboard([
+    ['🧾 List Produk', '🔥 Flash Sale'],
+    ['🛒 Stock', saldoLabel(me.balance)],
+    ...rows,
+    ['📜 Riwayat Transaksi']
+  ]).resize();
+
+  if (fs.existsSync(bannerPath)) {
+    await ctx.replyWithPhoto(
+      { source: bannerPath },
+      { caption: listText, parse_mode: 'HTML', ...keyboard }
+    );
+  } else {
+    await ctx.reply(listText, { parse_mode: 'HTML', ...keyboard });
+  }
 });
 
 // === 💰 SALDO & TOPUP ===
@@ -802,6 +899,8 @@ bot.action("saldo_topup", async (ctx) => {
 
 // === 🛒 Stock ===
 bot.hears(/^🛒 Stock/, async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.flashSale = false;
   try {
     await ctx.reply('📦 Menampilkan seluruh stok produk...');
 
@@ -918,6 +1017,8 @@ const statusBadge = (s) => {
 };
 
 bot.hears('📜 Riwayat Transaksi', async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.flashSale = false;
   const chatId = String(ctx.chat.id);
 
   const txAll = await loadTransactions();
@@ -3329,6 +3430,45 @@ bot.command("cekid", async (ctx) => {
   }
 });
 
+// === 🔥 FLASH SALE CONTROL (ADMIN ONLY)
+// Format: /flashsale <persen|off>
+bot.command("flashsale", async (ctx) => {
+  try {
+    if (!isAdmin(ctx.from.id)) return ctx.reply("🚫 Kamu bukan admin.");
+    if (!isAdminNow(ctx)) return ctx.reply("🚫 Kamu bukan admin.");
+
+    const arg = (ctx.message?.text || "").split(" ").slice(1).join(" ").trim();
+    if (!arg) {
+      const current = clampDiscount(getFlashSaleDiscount());
+      return ctx.reply(
+        `⚙️ Flash Sale saat ini: <b>${current}%</b>\n` +
+        `Gunakan: /flashsale <persen|off>\n` +
+        `Contoh: /flashsale 20`,
+        { parse_mode: "HTML" }
+      );
+    }
+
+    const input = arg.toLowerCase();
+    const nextValue = input === "off" ? 0 : Number(input);
+    if (!Number.isFinite(nextValue)) {
+      return ctx.reply("⚠️ Nilai tidak valid. Gunakan angka 0-100 atau 'off'.");
+    }
+
+    const clamped = clampDiscount(nextValue);
+    const db = await loadDB();
+    db.promo = db.promo || {};
+    db.promo.flashSalePercent = clamped;
+    await saveDB(db);
+    global.flashSaleDiscount = clamped;
+
+    const status = clamped > 0 ? `aktif (${clamped}%)` : "nonaktif";
+    await ctx.reply(`✅ Flash Sale sekarang ${status}.`, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("❌ Error di /flashsale:", err);
+    try { await ctx.reply("❌ Gagal memproses /flashsale, cek log server."); } catch {}
+  }
+});
+
 // === 📦 KIRIM AKUN MANUAL (ADMIN ONLY)
 // Format: /kirim <username/id> code|varian|jumlah
 // Contoh: /kirim @sphynixstore am|iphone|1
@@ -3925,6 +4065,8 @@ bot.on("callback_query", async (ctx, next) => {
 
 // ❓ CARA ORDER (simple + elegan)
 bot.hears('❓ Cara Order', async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.flashSale = false;
   const text = [
     `<b>🧭 PANDUAN ORDER PRODUK</b>`,
     ``,
@@ -3954,12 +4096,15 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
   const product = products.find(p => p.id === index);
   if (!product) return ctx.reply("⚠️ Produk tidak ditemukan!");
 
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
-  const variantList = product.variants.map(v =>
-    `• ${v.name}: <b>Rp ${rupiah(v.price)}</b> - Stok: ${v.stock}`
-  ).join('\n');
+  const variantList = product.variants.map(v => {
+    const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+    return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
+  }).join('\n');
 
   const text = [
+    isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
     `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
@@ -3972,7 +4117,7 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
     variantList,
     ``,
     `🔄 <i>Refresh at ${now}</i>`
-  ].join('\n').trim();
+  ].filter(Boolean).join('\n').trim();
 
   const variantButtons = [];
   for (let i = 0; i < product.variants.length; i += 2) {
@@ -3981,7 +4126,8 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
     const v2 = product.variants[i + 1];
 
     if (v1) {
-      const v1Text = `${v1.name} - Rp ${rupiah(v1.price)}‎`;
+      const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+      const v1Text = `${v1.name} - ${v1PriceText}‎`;
       row.push(
         v1.stock > 0
           ? { text: v1Text, callback_data: `buy_${product.id}_${v1.name}` }
@@ -3990,7 +4136,8 @@ bot.hears(/^(?:[1-9]|1[0-5])$/, async (ctx) => {
     }
 
     if (v2) {
-      const v2Text = `${v2.name} - Rp ${rupiah(v2.price)}‎`;
+      const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+      const v2Text = `${v2.name} - ${v2PriceText}‎`;
       row.push(
         v2.stock > 0
           ? { text: v2Text, callback_data: `buy_${product.id}_${v2.name}` }
@@ -4025,7 +4172,9 @@ try {
   }
 
 // 🧩 Simpan message aktif biar bisa dihapus/track nanti
-await trackSentProduct(ctx, product, sentMsg, false); // false = ini pesan produk, bukan transaksi
+if (!isFlashSale) {
+  await trackSentProduct(ctx, product, sentMsg, false); // false = ini pesan produk, bukan transaksi
+}
 } catch (err) {
   console.error("❌ Gagal kirim produk:", err);
   await ctx.reply(text, {
@@ -4116,11 +4265,13 @@ if (data.startsWith("pay_qris_")) {
   const variant = product.variants.find((v) => v.name === variantName);
   if (!variant) return ctx.answerCbQuery("❌ Varian tidak ditemukan");
 
-  const total = variant.price * jumlah;
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
+  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const total = unitPrice * jumlah;
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
 
   const text = [
-    `<b>💳 KONFIRMASI PEMBAYARAN 💳</b>`,
+    `<b>${isFlashSale ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
@@ -4270,6 +4421,7 @@ if (data.startsWith("refresh_")) {
 
     // === 🛒 Tampilan Konfirmasi Pesanan ===
     if (isOrder) {
+      const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
       const variantName =
         caption.match(/Varian:\s(.+)/)?.[1]?.trim() ||
         product.variants[0].name;
@@ -4278,14 +4430,15 @@ if (data.startsWith("refresh_")) {
         parseInt(caption.match(/Jumlah Pesanan:\s*x(\d+)/i)?.[1] || "1") || 1;
 
       const variant = product.variants.find((v) => v.name === variantName);
-      const total = variant.price * jumlah;
+      const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+      const total = unitPrice * jumlah;
 
       const text = [
-        `<b>KONFIRMASI PESANAN 🛒</b>`,
+        `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
         `╭──────────────────────╮`,
         `├ <b>Produk:</b> ${product.name}`,
         `├ <b>Varian:</b> ${variant.name}`,
-        `├ <b>Harga satuan:</b> Rp ${rupiah(variant.price)}`,
+        `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
         `├ <b>Stok tersedia:</b> ${variant.stock}`,
         `╰──────────────────────╯`,
         ``,
@@ -4348,14 +4501,16 @@ if (data.startsWith("refresh_")) {
     }
 
     // === tampilan produk biasa ===
+    const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
     const variantList = product.variants
-      .map(
-        (v) =>
-          `• ${v.name}: <b>Rp ${rupiah(v.price)}</b> - Stok: ${v.stock}`
-      )
+      .map((v) => {
+        const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+        return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
+      })
       .join("\n");
 
     const text = [
+      isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
       `${STORE_NICKNAME} PREMIUM APPS`,
       `╭──────────────────────╮`,
       `├ <b>Produk:</b> ${product.name}`,
@@ -4369,7 +4524,7 @@ if (data.startsWith("refresh_")) {
       ``,
       `🔄 <i>Refresh at ${now}</i>`,
       `<b><i></i></b>`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
     const variantButtons = [];
     for (let i = 0; i < product.variants.length; i += 2) {
@@ -4378,7 +4533,8 @@ if (data.startsWith("refresh_")) {
       const v2 = product.variants[i + 1];
 
       if (v1) {
-        const v1Text = `${v1.name} - Rp ${rupiah(v1.price)}‎`;
+        const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+        const v1Text = `${v1.name} - ${v1PriceText}‎`;
         row.push(
           v1.stock > 0
             ? { text: v1Text, callback_data: `buy_${product.id}_${v1.name}` }
@@ -4387,7 +4543,8 @@ if (data.startsWith("refresh_")) {
       }
 
       if (v2) {
-        const v2Text = `${v2.name} - Rp ${rupiah(v2.price)}‎`;
+        const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+        const v2Text = `${v2.name} - ${v2PriceText}‎`;
         row.push(
           v2.stock > 0
             ? { text: v2Text, callback_data: `buy_${product.id}_${v2.name}` }
@@ -4442,16 +4599,18 @@ if (data.startsWith("buy_")) {
   const [_, pid, variantName] = data.split("_");
   const product = products.find((p) => String(p.id) === pid);
   const variant = product.variants.find((v) => v.name === variantName);
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
   const jumlah = 1;
-  const total = variant.price * jumlah;
+  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const total = unitPrice * jumlah;
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
 
   const text = [
-    `<b>KONFIRMASI PESANAN 🛒</b>`,
+    `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
-    `├ <b>Harga satuan:</b> Rp ${rupiah(variant.price)}`,
+    `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
     `├ <b>Stok tersedia:</b> ${variant.stock}`,
     `╰──────────────────────╯`,
     ``,
@@ -4499,6 +4658,7 @@ if (data.startsWith("inc_") || data.startsWith("dec_")) {
   const [action, pid, variantName] = data.split("_");
   const product = products.find((p) => String(p.id) === pid);
   const variant = product.variants.find((v) => v.name === variantName);
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
 
   const caption = msg.caption || msg.text || "";
   const jumlahMatch = caption.match(/Jumlah Pesanan:\s*x(\d+)/i);
@@ -4507,15 +4667,16 @@ if (data.startsWith("inc_") || data.startsWith("dec_")) {
   if (action === "inc" && jumlah < variant.stock) jumlah++;
   if (action === "dec" && jumlah > 1) jumlah--;
 
-  const total = variant.price * jumlah;
+  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const total = unitPrice * jumlah;
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
 
   const text = [
-    `<b>KONFIRMASI PESANAN 🛒</b>`,
+    `<b>${isFlashSale ? "KONFIRMASI FLASH SALE 🛒" : "KONFIRMASI PESANAN 🛒"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
-    `├ <b>Harga satuan:</b> Rp ${rupiah(variant.price)}`,
+    `├ <b>Harga satuan:</b> ${isFlashSale ? formatFlashSaleHtml(variant.price) : `Rp ${rupiah(variant.price)}`}`,
     `├ <b>Stok tersedia:</b> ${variant.stock}`,
     `╰──────────────────────╯`,
     ``,
@@ -4597,12 +4758,14 @@ if (data.startsWith("pay_saldo_")) {
     return ctx.answerCbQuery("⚠️ Kamu belum terdaftar, ketik /start dulu!");
 
   // 💰 Hitung total sesuai jumlah pesanan
-  const total = variant.price * jumlah;
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
+  const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+  const total = unitPrice * jumlah;
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
 
   // Step konfirmasi
   const text = [
-    `<b>💳 KONFIRMASI PEMBAYARAN 💳</b>`,
+    `<b>${isFlashSale ? "💳 KONFIRMASI FLASH SALE 💳" : "💳 KONFIRMASI PEMBAYARAN 💳"}</b>`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
     `├ <b>Varian:</b> ${variant.name}`,
@@ -4686,7 +4849,9 @@ if (data.startsWith("confirm_pay_")) {
       return ctx.answerCbQuery("⚠️ Kamu belum terdaftar, ketik /start dulu!");
 
     // 💰 Hitung total sesuai jumlah
-    const total = variant.price * jumlah;
+    const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
+    const unitPrice = isFlashSale ? getFlashSalePrice(variant.price) : variant.price;
+    const total = unitPrice * jumlah;
     if (user.balance < total)
       return ctx.answerCbQuery("❌ Saldo tidak cukup!");
 
@@ -4966,15 +5131,17 @@ if (data.startsWith("back_")) {
   if (!product) return ctx.answerCbQuery("❌ Produk tidak ditemukan");
 
   const now = dayjs().tz().format("HH.mm.ss [WIB]");
+  const isFlashSale = Boolean(ctx.session?.flashSale) && isFlashSaleActive();
   const variantList = product.variants
-    .map(
-      (v) =>
-        `• ${v.name}: <b>Rp ${rupiah(v.price)}</b> - Stok: ${v.stock}`
-    )
+    .map((v) => {
+      const priceText = isFlashSale ? formatFlashSaleHtml(v.price) : `Rp ${rupiah(v.price)}`;
+      return `• ${v.name}: <b>${priceText}</b> - Stok: ${v.stock}`;
+    })
     .join("\n");
 
   // tambahin sedikit penanda waktu agar Telegram anggap teks berubah
   const text = [
+    isFlashSale ? `🔥 <b>FLASH SALE</b>` : null,
     `${STORE_NICKNAME} PREMIUM APPS`,
     `╭──────────────────────╮`,
     `├ <b>Produk:</b> ${product.name}`,
@@ -4988,7 +5155,7 @@ if (data.startsWith("back_")) {
     ``,
     `🔄 <i>Refresh at ${now}</i>`,
     `<b><i></i></b>` // ✅ tag dummy supaya konten beda
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   const variantButtons = [];
   for (let i = 0; i < product.variants.length; i += 2) {
@@ -4997,7 +5164,8 @@ if (data.startsWith("back_")) {
     const v2 = product.variants[i + 1];
 
     if (v1) {
-      const v1Text = `${v1.name} - Rp ${rupiah(v1.price)}‎`;
+      const v1PriceText = isFlashSale ? formatFlashSaleButton(v1.price) : `Rp ${rupiah(v1.price)}`;
+      const v1Text = `${v1.name} - ${v1PriceText}‎`;
       row.push(
         v1.stock > 0
           ? { text: v1Text, callback_data: `buy_${product.id}_${v1.name}` }
@@ -5006,7 +5174,8 @@ if (data.startsWith("back_")) {
     }
 
     if (v2) {
-      const v2Text = `${v2.name} - Rp ${rupiah(v2.price)}‎`;
+      const v2PriceText = isFlashSale ? formatFlashSaleButton(v2.price) : `Rp ${rupiah(v2.price)}`;
+      const v2Text = `${v2.name} - ${v2PriceText}‎`;
       row.push(
         v2.stock > 0
           ? { text: v2Text, callback_data: `buy_${product.id}_${v2.name}` }
@@ -5382,12 +5551,13 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
     `🔹 <b>/kirim</b> — <code>Kirim Manual</code>`,
     `🔹 <b>/saldo</b> — <code>Top up Saldo Manual</code>`
   ].join("\n");
-} else {
+    } else {
       categoryText = [
         `⚙️ <b>MENU SISTEM</b>`,
         `🔹 <b>/adminlist</b> — <code>Lihat Admin</code>`,
         `🔹 <b>/addadmin</b> — <code>Tambah Admin</code>`,
         `🔹 <b>/deladmin</b> — <code>Hapus Admin</code>`,
+        `🔹 <b>/flashsale</b> — <code>Atur Promo</code>`,
         `🔹 <b>/broadcast</b> — <code>Kirim Pesan</code>`,
         `🔹 <b>/setframeqris</b> — <code>Toggle Frame</code>`
       ].join("\n");
