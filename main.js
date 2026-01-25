@@ -4206,6 +4206,13 @@ bot.on("callback_query", async (ctx, next) => {
     const page = parseInt(data.split("_")[2]);
     const chatId = String(ctx.chat.id);
     const transactions = await loadTransactions();
+    const nextTestiIndex = (() => {
+      const numericIds = transactions
+        .map((t) => Number(t?.id))
+        .filter((n) => Number.isFinite(n));
+      const maxId = numericIds.length ? Math.max(...numericIds) : 0;
+      return maxId + 1;
+    })();
     const userTx = transactions.filter(t => t.user_id === chatId);
 
     if (userTx.length === 0) {
@@ -5146,6 +5153,13 @@ if (data.startsWith("confirm_pay_")) {
 
     // === 💾 Simpan transaksi ke /data/transactions.json ===
     const transactions = await loadTransactions();
+    const nextTestiIndex = (() => {
+      const numericIds = transactions
+        .map((t) => Number(t?.id))
+        .filter((n) => Number.isFinite(n));
+      const maxId = numericIds.length ? Math.max(...numericIds) : 0;
+      return maxId + 1;
+    })();
     const txId = "TXN" + Date.now();
     const nowDate = new Date();
     const nowFull = dayjs(nowDate).tz().format("YYYY-MM-DD HH:mm:ss [WIB]");
@@ -5165,7 +5179,7 @@ if (data.startsWith("confirm_pay_")) {
       timestamp: nowFull,
       akun: akunDataList, // ✅ simpan semua akun
     });
-    const testiIndex = transactions.length;
+    const testiIndex = nextTestiIndex;
 
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
