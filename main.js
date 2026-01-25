@@ -20,6 +20,7 @@
 // NOTE : JANGAN RECODE JIKA TIDAK PAHAM!!!
 const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
+const { sendPaymentAnnouncement, maskUserId } = require("./utils/paymentCard");
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -44,6 +45,14 @@ dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
 
 const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
 const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
+const normalizeChannelId = (value) => {
+  if (value === undefined || value === null) return null;
+  let raw = String(value).trim();
+  if (!raw) return null;
+  raw = raw.replace(/^['"]|['"]$/g, "").trim();
+  return raw || null;
+};
+const CHANNEL_TARGET = normalizeChannelId(process.env.CHANNEL_TARGET);
 
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
@@ -4197,6 +4206,13 @@ bot.on("callback_query", async (ctx, next) => {
     const page = parseInt(data.split("_")[2]);
     const chatId = String(ctx.chat.id);
     const transactions = await loadTransactions();
+    const nextTestiIndex = (() => {
+      const numericIds = transactions
+        .map((t) => Number(t?.id))
+        .filter((n) => Number.isFinite(n));
+      const maxId = numericIds.length ? Math.max(...numericIds) : 0;
+      return maxId + 1;
+    })();
     const userTx = transactions.filter(t => t.user_id === chatId);
 
     if (userTx.length === 0) {
@@ -5137,8 +5153,16 @@ if (data.startsWith("confirm_pay_")) {
 
     // === 💾 Simpan transaksi ke /data/transactions.json ===
     const transactions = await loadTransactions();
+    const nextTestiIndex = (() => {
+      const numericIds = transactions
+        .map((t) => Number(t?.id))
+        .filter((n) => Number.isFinite(n));
+      const maxId = numericIds.length ? Math.max(...numericIds) : 0;
+      return maxId + 1;
+    })();
     const txId = "TXN" + Date.now();
-    const nowFull = dayjs().tz().format("YYYY-MM-DD HH:mm:ss [WIB]");
+    const nowDate = new Date();
+    const nowFull = dayjs(nowDate).tz().format("YYYY-MM-DD HH:mm:ss [WIB]");
 
     // Simpan semua akun dalam 1 transaksi
     transactions.push({
@@ -5155,26 +5179,49 @@ if (data.startsWith("confirm_pay_")) {
       timestamp: nowFull,
       akun: akunDataList, // ✅ simpan semua akun
     });
+    const testiIndex = nextTestiIndex;
 
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
 
-    await sendOrderLogToChannel(bot, {
-      channelId: process.env.ORDER_LOG_CHANNEL,
-      txRef: txId,
-      orderRef: txId,
-      userId: String(ctx.chat.id),
-      username: user.username || ctx.from?.username || "-",
-      buyerName: user.first_name || user.username || "-",
-      product: { code: product.code || "-", name: product.name },
-      variantName: variant.name,
-      qty: jumlah,
-      delivered: akunDataList.length,
-      totalAmount: total,
-      paymentMethod: "saldo",
-      createdAt: nowFull,
-      accounts: akunDataList,
-    });
+    if (CHANNEL_TARGET) {
+      try {
+        await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
+          store: STORE_NICKNAME,
+          tanggalOrder: nowDate,
+          totalBayar: total,
+          product: product.name,
+          variasi: variant.name,
+          statusPembayaran: "Berhasil",
+          testiIndex,
+          qty: jumlah,
+          maskedUserId: maskUserId(ctx.chat.id),
+        });
+      } catch (err) {
+        console.error("❌ Gagal kirim testi saldo:", err?.message || err);
+      }
+    }
+
+    try {
+      await sendOrderLogToChannel(bot, {
+        channelId: process.env.ORDER_LOG_CHANNEL,
+        txRef: txId,
+        orderRef: txId,
+        userId: String(ctx.chat.id),
+        username: user.username || ctx.from?.username || "-",
+        buyerName: user.first_name || user.username || "-",
+        product: { code: product.code || "-", name: product.name },
+        variantName: variant.name,
+        qty: jumlah,
+        delivered: akunDataList.length,
+        totalAmount: total,
+        paymentMethod: "saldo",
+        createdAt: nowFull,
+        accounts: akunDataList,
+      });
+    } catch (err) {
+      console.error("❌ Gagal kirim order log saldo:", err?.message || err);
+    }
 
     // === 📨 Kirim pesan hasil pembayaran ===
     const now = dayjs().tz().format("HH.mm.ss [WIB]");
