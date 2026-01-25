@@ -20,6 +20,7 @@
 // NOTE : JANGAN RECODE JIKA TIDAK PAHAM!!!
 const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
+const { sendPaymentAnnouncement, maskUserId } = require("./utils/paymentCard");
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -44,6 +45,14 @@ dayjs.tz.setDefault(process.env.TZ || "Asia/Jakarta");
 
 const STORE_NICKNAME = process.env.STORE_NICKNAME || "SEN PRO";
 const PAYMENT_GATEWAY_LABEL = process.env.PAYMENT_GATEWAY_LABEL || "YSPAY";
+const normalizeChannelId = (value) => {
+  if (value === undefined || value === null) return null;
+  let raw = String(value).trim();
+  if (!raw) return null;
+  raw = raw.replace(/^['"]|['"]$/g, "").trim();
+  return raw || null;
+};
+const CHANNEL_TARGET = normalizeChannelId(process.env.CHANNEL_TARGET);
 
 // ==== Helpers waktu berbasis ENV TZ ====
 const APP_TZ = process.env.TZ || "Asia/Jakarta";
@@ -5158,6 +5167,24 @@ if (data.startsWith("confirm_pay_")) {
 
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
+
+    if (CHANNEL_TARGET) {
+      try {
+        await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
+          store: STORE_NICKNAME,
+          tanggalOrder: nowFull,
+          totalBayar: total,
+          product: product.name,
+          variasi: variant.name,
+          statusPembayaran: "Berhasil",
+          testiIndex: txId,
+          qty: jumlah,
+          maskedUserId: maskUserId(ctx.chat.id),
+        });
+      } catch (err) {
+        console.error("❌ Gagal kirim testi saldo:", err?.message || err);
+      }
+    }
 
     await sendOrderLogToChannel(bot, {
       channelId: process.env.ORDER_LOG_CHANNEL,
