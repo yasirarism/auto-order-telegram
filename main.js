@@ -5170,47 +5170,44 @@ if (data.startsWith("confirm_pay_")) {
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
 
     if (CHANNEL_TARGET) {
-      (async () => {
-        try {
-          await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
-            store: STORE_NICKNAME,
-            tanggalOrder: nowDate,
-            totalBayar: total,
-            product: product.name,
-            variasi: variant.name,
-            statusPembayaran: "Berhasil",
-            testiIndex: txId,
-            qty: jumlah,
-            maskedUserId: maskUserId(ctx.chat.id),
-          });
-        } catch (err) {
-          console.error("❌ Gagal kirim testi saldo:", err?.message || err);
-        }
-      })();
-    }
-
-    (async () => {
       try {
-        await sendOrderLogToChannel(bot, {
-          channelId: process.env.ORDER_LOG_CHANNEL,
-          txRef: txId,
-          orderRef: txId,
-          userId: String(ctx.chat.id),
-          username: user.username || ctx.from?.username || "-",
-          buyerName: user.first_name || user.username || "-",
-          product: { code: product.code || "-", name: product.name },
-          variantName: variant.name,
+        const testiIndex = Number(String(txId).replace(/\D/g, "")) || txId;
+        await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
+          store: STORE_NICKNAME,
+          tanggalOrder: nowDate,
+          totalBayar: total,
+          product: product.name,
+          variasi: variant.name,
+          statusPembayaran: "Berhasil",
+          testiIndex,
           qty: jumlah,
-          delivered: akunDataList.length,
-          totalAmount: total,
-          paymentMethod: "saldo",
-          createdAt: nowFull,
-          accounts: akunDataList,
+          maskedUserId: maskUserId(ctx.chat.id),
         });
       } catch (err) {
-        console.error("❌ Gagal kirim order log saldo:", err?.message || err);
+        console.error("❌ Gagal kirim testi saldo:", err?.message || err);
       }
-    })();
+    }
+
+    try {
+      await sendOrderLogToChannel(bot, {
+        channelId: process.env.ORDER_LOG_CHANNEL,
+        txRef: txId,
+        orderRef: txId,
+        userId: String(ctx.chat.id),
+        username: user.username || ctx.from?.username || "-",
+        buyerName: user.first_name || user.username || "-",
+        product: { code: product.code || "-", name: product.name },
+        variantName: variant.name,
+        qty: jumlah,
+        delivered: akunDataList.length,
+        totalAmount: total,
+        paymentMethod: "saldo",
+        createdAt: nowFull,
+        accounts: akunDataList,
+      });
+    } catch (err) {
+      console.error("❌ Gagal kirim order log saldo:", err?.message || err);
+    }
 
     // === 📨 Kirim pesan hasil pembayaran ===
     const now = dayjs().tz().format("HH.mm.ss [WIB]");
