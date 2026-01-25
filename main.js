@@ -5165,13 +5165,13 @@ if (data.startsWith("confirm_pay_")) {
       timestamp: nowFull,
       akun: akunDataList, // ✅ simpan semua akun
     });
+    const testiIndex = transactions.length;
 
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
 
     if (CHANNEL_TARGET) {
       try {
-        const testiIndex = Number(String(txId).replace(/\D/g, "")) || txId;
         await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
           store: STORE_NICKNAME,
           tanggalOrder: nowDate,
