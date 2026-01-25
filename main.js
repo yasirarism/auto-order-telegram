@@ -5147,7 +5147,8 @@ if (data.startsWith("confirm_pay_")) {
     // === 💾 Simpan transaksi ke /data/transactions.json ===
     const transactions = await loadTransactions();
     const txId = "TXN" + Date.now();
-    const nowFull = dayjs().tz().format("YYYY-MM-DD HH:mm:ss [WIB]");
+    const nowDate = new Date();
+    const nowFull = dayjs(nowDate).tz().format("YYYY-MM-DD HH:mm:ss [WIB]");
 
     // Simpan semua akun dalam 1 transaksi
     transactions.push({
@@ -5172,7 +5173,7 @@ if (data.startsWith("confirm_pay_")) {
       try {
         await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
           store: STORE_NICKNAME,
-          tanggalOrder: nowFull,
+          tanggalOrder: nowDate,
           totalBayar: total,
           product: product.name,
           variasi: variant.name,
