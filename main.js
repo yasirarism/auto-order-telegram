@@ -30,7 +30,7 @@ const Transactions = require("./lib/transactions");
 const txHandler = new Transactions();
 const Database = require("./lib/database");
 const store = require("./lib/mongo-store");
-const { getDb } = require("./lib/mongo");
+const { getDb, isMongoEnabled } = require("./lib/mongo");
 const { createSessionStore } = require("./lib/mongo-session-store");
 const tx = new Database("data/transactions.json");
 const logger = require("./utils/logger");
@@ -440,7 +440,7 @@ CornService.register('warn_expiry', '*/10 * * * * *', async () => {
 });
 
 (async () => {
-  // === 💾 Session store ke MongoDB biar persist & aman ===
+  // === 💾 Session store (MongoDB jika ada, fallback file lokal) ===
   let activeMessages = [];
   const mongoSession = createSessionStore();
 
@@ -6509,20 +6509,38 @@ setInterval(async () => {
     const transactions = await loadTransactions();
     if (!transactions.length) return;
 
-    const db = await getDb();
-    const backups = db.collection("transaction_backups");
     const createdAt = new Date();
 
-    await backups.insertOne({
-      createdAt,
-      data: transactions,
+    if (isMongoEnabled()) {
+      const db = await getDb();
+      const backups = db.collection("transaction_backups");
+
+      await backups.insertOne({
+        createdAt,
+        data: transactions,
+      });
+
+      console.log(`💾 Backup transaksi tersimpan di MongoDB: ${createdAt.toISOString()}`);
+
+      // 🧹 Hapus backup yang lebih tua dari 30 hari
+      const thirtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
+      await backups.deleteMany({ createdAt: { $lt: thirtyDaysAgo } });
+      return;
+    }
+
+    const backupPath = path.resolve(__dirname, "data/transaction_backups.json");
+    const backups = await store.readJson(backupPath, []);
+    const nextBackups = Array.isArray(backups) ? backups : [];
+    nextBackups.push({ createdAt: createdAt.toISOString(), data: transactions });
+
+    const thirtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
+    const pruned = nextBackups.filter((entry) => {
+      const ts = new Date(entry.createdAt);
+      return ts >= thirtyDaysAgo;
     });
 
-    console.log(`💾 Backup transaksi tersimpan di MongoDB: ${createdAt.toISOString()}`);
-
-    // 🧹 Hapus backup yang lebih tua dari 30 hari
-    const thirtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
-    await backups.deleteMany({ createdAt: { $lt: thirtyDaysAgo } });
+    await store.writeJson(backupPath, pruned);
+    console.log(`💾 Backup transaksi tersimpan di file lokal: ${backupPath}`);
   } catch (err) {
     console.error("❌ Gagal backup transaksi:", err.message);
   }
