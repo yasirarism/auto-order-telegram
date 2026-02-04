@@ -529,6 +529,7 @@ bot.action("broadcast_confirm", async (ctx) => {
     await ctx.answerCbQuery("✅ Broadcast dimulai.");
 
     setImmediate(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       let success = 0, failed = 0, removed = 0;
       const total = users.length;
       const db = await loadDB();
@@ -591,6 +592,16 @@ bot.action("broadcast_confirm", async (ctx) => {
 
           success++;
         } catch (err) {
+          const retryAfter =
+            Number(err?.parameters?.retry_after) ||
+            Number(err?.response?.parameters?.retry_after) ||
+            Number(err?.response?.data?.parameters?.retry_after) ||
+            Number(err?.retry_after);
+          if (retryAfter) {
+            await sleep((retryAfter + 1) * 1000);
+            i -= 1;
+            continue;
+          }
           failed++;
           const desc = String(err.description || "");
           if (desc.includes("bot was blocked by the user")) {
@@ -629,10 +640,7 @@ bot.action("broadcast_confirm", async (ctx) => {
         `⚡ <i>Database otomatis dibersihkan dari user yang blokir bot</i>`,
       ].join("\n");
 
-      const updated = await updateMessage(summary);
-      if (!updated && chatId) {
-        await telegram.sendMessage(chatId, summary, { parse_mode: "HTML" }).catch(() => {});
-      }
+      await updateMessage(summary);
 
       clearBroadcastSession(ctx);
 
