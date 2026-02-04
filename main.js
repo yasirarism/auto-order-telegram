@@ -113,6 +113,32 @@ function getAdminContactLabel() {
 }
 
 const sessions = new Map();
+const broadcastSessions = new Map();
+
+function getBroadcastKey(ctx) {
+  const uid = ctx.from?.id || ctx.callbackQuery?.from?.id;
+  const cid = ctx.chat?.id || ctx.callbackQuery?.message?.chat?.id;
+  if (!uid || !cid) return null;
+  return `${uid}:${cid}`;
+}
+
+function setBroadcastSession(ctx, data) {
+  const key = getBroadcastKey(ctx);
+  if (key) broadcastSessions.set(key, data);
+  ctx.session ??= {};
+  ctx.session.broadcast = data;
+}
+
+function getBroadcastSession(ctx) {
+  const key = getBroadcastKey(ctx);
+  return ctx.session?.broadcast || (key ? broadcastSessions.get(key) : null);
+}
+
+function clearBroadcastSession(ctx) {
+  const key = getBroadcastKey(ctx);
+  if (key) broadcastSessions.delete(key);
+  if (ctx.session?.broadcast) delete ctx.session.broadcast;
+}
 
 // === 👑 isAdmin Dinamis (pakai settings terbaru tiap kali dipanggil)
 function isAdmin(chatIdOrUsername) {
@@ -469,14 +495,15 @@ bot.action("broadcast_confirm", async (ctx) => {
     if (ctx.callbackQuery?.data !== "broadcast_confirm") return;
     if (!isAdminNow(ctx)) return ctx.answerCbQuery("🚫 Kamu bukan admin.");
 
-    ctx.session ??= {};
-    const data = ctx.session.broadcast;
+    const data = getBroadcastSession(ctx);
     if (!data || !data.pending) {
       return ctx.answerCbQuery("⚠️ Tidak ada broadcast aktif.");
     }
 
     const { message, photo, fileId, fileType, users } = data;
-    ctx.session.broadcast.pending = false;
+    data.pending = false;
+    const broadcastKey = getBroadcastKey(ctx);
+    if (broadcastKey) broadcastSessions.set(broadcastKey, data);
 
     const isPhotoMsg = Boolean(ctx.callbackQuery.message.caption);
     const updateMessage = async (text) => {
@@ -591,7 +618,7 @@ bot.action("broadcast_confirm", async (ctx) => {
     await ctx.editMessageText(summary, { parse_mode: "HTML" })
       .catch(() => ctx.reply(summary, { parse_mode: "HTML" }));
 
-    delete ctx.session.broadcast;
+    clearBroadcastSession(ctx);
 
     setTimeout(async () => {
       try {
@@ -610,8 +637,7 @@ bot.action("broadcast_confirm", async (ctx) => {
       const chatId = String(ctx.chat.id);
       if (!isAdmin(chatId)) return ctx.answerCbQuery("🚫 Kamu bukan admin.");
 
-      ctx.session ??= {};
-      ctx.session.broadcast = null;
+      clearBroadcastSession(ctx);
 
       await ctx.answerCbQuery("❌ Broadcast dibatalkan.");
       try {
@@ -4021,14 +4047,13 @@ bot.use(async (ctx, next) => {
     const message = caption.replace(/^\/broadcast\s*/i, "").trim() || "";
 
     // Simpan session
-    ctx.session ??= {};
-    ctx.session.broadcast = {
+    setBroadcastSession(ctx, {
       pending: true,
       message,
       fileId,
       fileType,
       users,
-    };
+    });
 
     // Tombol konfirmasi
     const keyboard = Markup.inlineKeyboard([
@@ -6291,8 +6316,7 @@ async function handleBroadcast(ctx, message, photo) {
   const users = Object.values(db.users || {});
   if (users.length === 0) return ctx.reply("📭 Belum ada user terdaftar.");
 
-  ctx.session ??= {};
-  ctx.session.broadcast = {
+  setBroadcastSession(ctx, {
     pending: true,
     message,
     photo,
@@ -6301,7 +6325,7 @@ async function handleBroadcast(ctx, message, photo) {
       username: u.username,
       first_name: u.first_name,
     })),
-  };
+  });
 
   const caption = `📝 <b>Konfirmasi Broadcast</b>\n\n${esc(
     message || ""
@@ -6397,14 +6421,13 @@ bot.command("broadcast", async (ctx) => {
     }
 
     // --- Simpan session broadcast ---
-    ctx.session ??= {};
-    ctx.session.broadcast = {
+    setBroadcastSession(ctx, {
       pending: true,
       message,
       fileId,
       fileType,
       users,
-    };
+    });
 
     const keyboard = Markup.inlineKeyboard([
       [
