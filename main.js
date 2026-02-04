@@ -6394,6 +6394,12 @@ bot.command("broadcast", async (ctx) => {
       message = "(stiker)";
     }
 
+    // === 💬 CASE 4: Reply ke teks
+    else if (reply?.text) {
+      const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
+      message = args || reply.text || "";
+    }
+
     // === 📸 CASE 4: Kirim foto langsung dengan caption /broadcast ...
     else if (ctx.message.photo) {
       const file = ctx.message.photo[ctx.message.photo.length - 1];
@@ -6415,7 +6421,7 @@ bot.command("broadcast", async (ctx) => {
     else {
       const args = ctx.message.text.split(" ").slice(1).join(" ");
       if (!args) {
-        return ctx.reply("📩 Kirim /broadcast <pesan> atau reply ke foto/video/stiker.");
+        return ctx.reply("📩 Kirim /broadcast <pesan> atau reply ke teks/foto/video/stiker.");
       }
       message = args;
     }
