@@ -113,6 +113,32 @@ function getAdminContactLabel() {
 }
 
 const sessions = new Map();
+const broadcastSessions = new Map();
+
+function getBroadcastKey(ctx) {
+  const uid = ctx.from?.id || ctx.callbackQuery?.from?.id;
+  const cid = ctx.chat?.id || ctx.callbackQuery?.message?.chat?.id;
+  if (!uid || !cid) return null;
+  return `${uid}:${cid}`;
+}
+
+function setBroadcastSession(ctx, data) {
+  const key = getBroadcastKey(ctx);
+  if (key) broadcastSessions.set(key, data);
+  ctx.session ??= {};
+  ctx.session.broadcast = data;
+}
+
+function getBroadcastSession(ctx) {
+  const key = getBroadcastKey(ctx);
+  return ctx.session?.broadcast || (key ? broadcastSessions.get(key) : null);
+}
+
+function clearBroadcastSession(ctx) {
+  const key = getBroadcastKey(ctx);
+  if (key) broadcastSessions.delete(key);
+  if (ctx.session?.broadcast) delete ctx.session.broadcast;
+}
 
 // === 👑 isAdmin Dinamis (pakai settings terbaru tiap kali dipanggil)
 function isAdmin(chatIdOrUsername) {
@@ -469,136 +495,163 @@ bot.action("broadcast_confirm", async (ctx) => {
     if (ctx.callbackQuery?.data !== "broadcast_confirm") return;
     if (!isAdminNow(ctx)) return ctx.answerCbQuery("🚫 Kamu bukan admin.");
 
-    ctx.session ??= {};
-    const data = ctx.session.broadcast;
+    const data = getBroadcastSession(ctx);
     if (!data || !data.pending) {
       return ctx.answerCbQuery("⚠️ Tidak ada broadcast aktif.");
     }
 
     const { message, photo, fileId, fileType, users } = data;
-    ctx.session.broadcast.pending = false;
+    data.pending = false;
+    const broadcastKey = getBroadcastKey(ctx);
+    if (broadcastKey) broadcastSessions.set(broadcastKey, data);
 
-    const isPhotoMsg = Boolean(ctx.callbackQuery.message.caption);
+    const callbackMessage = ctx.callbackQuery?.message;
+    const chatId = callbackMessage?.chat?.id;
+    const messageId = callbackMessage?.message_id;
+    const isPhotoMsg = Boolean(callbackMessage?.caption);
+    const telegram = ctx.telegram;
     const updateMessage = async (text) => {
+      if (!chatId || !messageId) return;
       if (isPhotoMsg) {
-        await ctx.editMessageCaption(text, { parse_mode: "HTML" }).catch(() => {});
+        return telegram
+          .editMessageCaption(chatId, messageId, null, text, { parse_mode: "HTML" })
+          .then(() => true)
+          .catch(() => false);
       } else {
-        await ctx.editMessageText(text, { parse_mode: "HTML" }).catch(() => {});
+        return telegram
+          .editMessageText(chatId, messageId, null, text, { parse_mode: "HTML" })
+          .then(() => true)
+          .catch(() => false);
       }
     };
 
     await updateMessage("📢 <b>Broadcast dimulai...</b>");
+    await ctx.answerCbQuery("✅ Broadcast dimulai.");
 
-    let success = 0, failed = 0, removed = 0;
-    const total = users.length;
-    const db = await loadDB();
+    setImmediate(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      let success = 0, failed = 0, removed = 0;
+      const total = users.length;
+      const db = await loadDB();
 
-    // --- Deteksi media ---
-    // Prioritaskan universal data dari session (fileId/fileType)
-    let mediaType = fileType || (photo ? "photo" : null);
-    let mediaId = fileId || photo || null;
+      // --- Deteksi media ---
+      // Prioritaskan universal data dari session (fileId/fileType)
+      let mediaType = fileType || (photo ? "photo" : null);
+      let mediaId = fileId || photo || null;
 
-    // --- Loop kirim ---
-    for (let i = 0; i < total; i++) {
-      const user = users[i];
-      try {
-        if (mediaId) {
-          switch (mediaType) {
-            case "photo":
-              await ctx.telegram.sendPhoto(user.id, mediaId, {
-                caption: message || "",
-                parse_mode: "HTML",
-              });
-              break;
-            case "video":
-              await ctx.telegram.sendVideo(user.id, mediaId, {
-                caption: message || "",
-                parse_mode: "HTML",
-              });
-              break;
-            case "document":
-              await ctx.telegram.sendDocument(user.id, mediaId, {
-                caption: message || "",
-                parse_mode: "HTML",
-              });
-              break;
-            case "animation":
-              await ctx.telegram.sendAnimation(user.id, mediaId, {
-                caption: message || "",
-                parse_mode: "HTML",
-              });
-              break;
-            case "audio":
-              await ctx.telegram.sendAudio(user.id, mediaId, {
-                caption: message || "",
-                parse_mode: "HTML",
-              });
-              break;
-            default:
-              await ctx.telegram.sendMessage(user.id, message || "", {
-                parse_mode: "HTML",
-              });
+      // --- Loop kirim ---
+      for (let i = 0; i < total; i++) {
+        const user = users[i];
+        try {
+          if (mediaId) {
+            switch (mediaType) {
+              case "photo":
+                await telegram.sendPhoto(user.id, mediaId, {
+                  caption: message || "",
+                  parse_mode: "HTML",
+                });
+                break;
+              case "video":
+                await telegram.sendVideo(user.id, mediaId, {
+                  caption: message || "",
+                  parse_mode: "HTML",
+                });
+                break;
+              case "document":
+                await telegram.sendDocument(user.id, mediaId, {
+                  caption: message || "",
+                  parse_mode: "HTML",
+                });
+                break;
+              case "animation":
+                await telegram.sendAnimation(user.id, mediaId, {
+                  caption: message || "",
+                  parse_mode: "HTML",
+                });
+                break;
+              case "audio":
+                await telegram.sendAudio(user.id, mediaId, {
+                  caption: message || "",
+                  parse_mode: "HTML",
+                });
+                break;
               case "sticker":
-              await ctx.telegram.sendSticker(user.id, mediaId);
-              break;
+                await telegram.sendSticker(user.id, mediaId);
+                break;
+              default:
+                await telegram.sendMessage(user.id, message || "", {
+                  parse_mode: "HTML",
+                });
+                break;
+            }
+          } else {
+            await telegram.sendMessage(user.id, message || "", {
+              parse_mode: "HTML",
+            });
           }
-        } else {
-          await ctx.telegram.sendMessage(user.id, message || "", {
-            parse_mode: "HTML",
-          });
+
+          success++;
+        } catch (err) {
+          const retryAfter =
+            Number(err?.parameters?.retry_after) ||
+            Number(err?.response?.parameters?.retry_after) ||
+            Number(err?.response?.data?.parameters?.retry_after) ||
+            Number(err?.retry_after);
+          if (retryAfter) {
+            await sleep((retryAfter + 1) * 1000);
+            i -= 1;
+            continue;
+          }
+          failed++;
+          const desc = String(err.description || "");
+          if (desc.includes("bot was blocked by the user")) {
+            delete db.users[user.id];
+            removed++;
+            await saveDB(db);
+          } else {
+            console.error(`❌ Gagal kirim ke ${user.id}:`, desc);
+          }
         }
 
-        success++;
-      } catch (err) {
-        failed++;
-        const desc = String(err.description || "");
-        if (desc.includes("bot was blocked by the user")) {
-          delete db.users[user.id];
-          removed++;
-          await saveDB(db);
-        } else {
-          console.error(`❌ Gagal kirim ke ${user.id}:`, desc);
+        // update progress
+        if (i % 3 === 0 || i === total - 1) {
+          const filled = Math.floor(((i + 1) / total) * 10);
+          const bar = "▓".repeat(filled) + "░".repeat(10 - filled);
+          const statusText = [
+            `📤 <b>Broadcast sedang berjalan...</b>`,
+            `👤 <a href="tg://user?id=${user.id}">${user.first_name || "User"}</a>`,
+            ``,
+            `📦 Progress: [${bar}] <b>${i + 1}/${total}</b>`,
+            `🟢 Sukses: <b>${success}</b> | 🔴 Gagal: <b>${failed}</b> | 🧹 Dihapus: <b>${removed}</b>`,
+          ].join("\n");
+          await updateMessage(statusText);
         }
+
+        await new Promise((r) => setTimeout(r, 1000)); // throttle
       }
 
-      // update progress
-      if (i % 3 === 0 || i === total - 1) {
-        const filled = Math.floor(((i + 1) / total) * 10);
-        const bar = "▓".repeat(filled) + "░".repeat(10 - filled);
-        const statusText = [
-          `📤 <b>Broadcast sedang berjalan...</b>`,
-          `👤 <a href="tg://user?id=${user.id}">${user.first_name || "User"}</a>`,
-          ``,
-          `📦 Progress: [${bar}] <b>${i + 1}/${total}</b>`,
-          `🟢 Sukses: <b>${success}</b> | 🔴 Gagal: <b>${failed}</b> | 🧹 Dihapus: <b>${removed}</b>`,
-        ].join("\n");
-        await updateMessage(statusText);
-      }
+      const summary = [
+        `✅ <b>Broadcast selesai!</b>`,
+        `📨 Total penerima: <b>${total}</b>`,
+        `🟢 Berhasil: <b>${success}</b>`,
+        `🔴 Gagal: <b>${failed}</b>`,
+        `🧹 Dihapus (blokir bot): <b>${removed}</b>`,
+        ``,
+        `⚡ <i>Database otomatis dibersihkan dari user yang blokir bot</i>`,
+      ].join("\n");
 
-      await new Promise((r) => setTimeout(r, 1000)); // throttle
-    }
+      await updateMessage(summary);
 
-    const summary = [
-      `✅ <b>Broadcast selesai!</b>`,
-      `📨 Total penerima: <b>${total}</b>`,
-      `🟢 Berhasil: <b>${success}</b>`,
-      `🔴 Gagal: <b>${failed}</b>`,
-      `🧹 Dihapus (blokir bot): <b>${removed}</b>`,
-      ``,
-      `⚡ <i>Database otomatis dibersihkan dari user yang blokir bot</i>`,
-    ].join("\n");
+      clearBroadcastSession(ctx);
 
-    await ctx.editMessageText(summary, { parse_mode: "HTML" })
-      .catch(() => ctx.reply(summary, { parse_mode: "HTML" }));
-
-    delete ctx.session.broadcast;
-
-    setTimeout(async () => {
-      try {
-        const msg = ctx.callbackQuery?.message;
-        if (msg) await ctx.telegram.deleteMessage(msg.chat.id, msg.message_id);
-      } catch {}
-    }, 3000);
+      setTimeout(async () => {
+        try {
+          if (chatId && messageId) {
+            await telegram.deleteMessage(chatId, messageId);
+          }
+        } catch {}
+      }, 3000);
+    });
   } catch (err) {
     console.error("❌ Error di broadcast_confirm:", err);
     ctx.reply("❌ Terjadi kesalahan saat broadcast!");
@@ -610,8 +663,7 @@ bot.action("broadcast_confirm", async (ctx) => {
       const chatId = String(ctx.chat.id);
       if (!isAdmin(chatId)) return ctx.answerCbQuery("🚫 Kamu bukan admin.");
 
-      ctx.session ??= {};
-      ctx.session.broadcast = null;
+      clearBroadcastSession(ctx);
 
       await ctx.answerCbQuery("❌ Broadcast dibatalkan.");
       try {
@@ -4021,14 +4073,13 @@ bot.use(async (ctx, next) => {
     const message = caption.replace(/^\/broadcast\s*/i, "").trim() || "";
 
     // Simpan session
-    ctx.session ??= {};
-    ctx.session.broadcast = {
+    setBroadcastSession(ctx, {
       pending: true,
       message,
       fileId,
       fileType,
       users,
-    };
+    });
 
     // Tombol konfirmasi
     const keyboard = Markup.inlineKeyboard([
@@ -5184,7 +5235,7 @@ if (data.startsWith("confirm_pay_")) {
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
 
-    if (CHANNEL_TARGET) {
+    if (CHANNEL_TARGET && !isAdminNow(ctx)) {
       try {
         await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
           store: STORE_NICKNAME,
@@ -6291,8 +6342,7 @@ async function handleBroadcast(ctx, message, photo) {
   const users = Object.values(db.users || {});
   if (users.length === 0) return ctx.reply("📭 Belum ada user terdaftar.");
 
-  ctx.session ??= {};
-  ctx.session.broadcast = {
+  setBroadcastSession(ctx, {
     pending: true,
     message,
     photo,
@@ -6301,7 +6351,7 @@ async function handleBroadcast(ctx, message, photo) {
       username: u.username,
       first_name: u.first_name,
     })),
-  };
+  });
 
   const caption = `📝 <b>Konfirmasi Broadcast</b>\n\n${esc(
     message || ""
@@ -6370,6 +6420,12 @@ bot.command("broadcast", async (ctx) => {
       message = "(stiker)";
     }
 
+    // === 💬 CASE 4: Reply ke teks
+    else if (reply?.text) {
+      const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
+      message = args || reply.text || "";
+    }
+
     // === 📸 CASE 4: Kirim foto langsung dengan caption /broadcast ...
     else if (ctx.message.photo) {
       const file = ctx.message.photo[ctx.message.photo.length - 1];
@@ -6391,20 +6447,19 @@ bot.command("broadcast", async (ctx) => {
     else {
       const args = ctx.message.text.split(" ").slice(1).join(" ");
       if (!args) {
-        return ctx.reply("📩 Kirim /broadcast <pesan> atau reply ke foto/video/stiker.");
+        return ctx.reply("📩 Kirim /broadcast <pesan> atau reply ke teks/foto/video/stiker.");
       }
       message = args;
     }
 
     // --- Simpan session broadcast ---
-    ctx.session ??= {};
-    ctx.session.broadcast = {
+    setBroadcastSession(ctx, {
       pending: true,
       message,
       fileId,
       fileType,
       users,
-    };
+    });
 
     const keyboard = Markup.inlineKeyboard([
       [
