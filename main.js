@@ -5209,7 +5209,7 @@ if (data.startsWith("confirm_pay_")) {
     await saveTransactions(transactions);
     console.log(`💾 Transaksi ${txId} disimpan ke data/transactions.json`);
 
-    if (CHANNEL_TARGET) {
+    if (CHANNEL_TARGET && !isAdminNow(ctx)) {
       try {
         await sendPaymentAnnouncement(bot, CHANNEL_TARGET, {
           store: STORE_NICKNAME,
