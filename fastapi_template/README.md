@@ -1,23 +1,25 @@
-# FastAPI GoPay Merchant Template
+# FastAPI + Pyrogram GoPay Merchant Template
 
-Template ini mereplikasi konsep dari script Node.js di repo ini:
+Template ini melengkapi flow end-to-end seperti di Node.js:
 
-1. Auth GoBiz (password / refresh token)
-2. Simpan `access_token`, `refresh_token`, `merchant_id`
-3. Cek status pembayaran via `journals/search` (berdasarkan amount + waktu + merchant)
-4. Endpoint HTTP untuk dipakai script/project Python lain
+1. Generate nominal unik + QRIS dinamis
+2. Kirim QR ke user (Telegram via Pyrogram)
+3. Polling status payment ke GoBiz (`journals/search`)
+4. Auto update status `pending` / `paid` / `expired`
+5. Warning timeout saat sisa waktu <= 60 detik
 
 ## Struktur
 
-- `app/main.py` : entrypoint FastAPI
-- `app/config.py` : env settings
-- `app/storage.py` : file-based credential/token storage
-- `app/gopay_client.py` : HTTP client GoBiz
-- `app/gateway_service.py` : business logic auth + cek status
-- `.env.example` : variabel lingkungan
-- `requirements.txt` : dependencies
+- `app/main.py` : endpoint FastAPI
+- `app/config.py` : settings env
+- `app/storage.py` : state store untuk token GoBiz
+- `app/transaction_store.py` : sample store transaksi bot
+- `app/qris.py` : generator QRIS dinamis (CRC16)
+- `app/gopay_client.py` : HTTP client ke GoBiz
+- `app/gateway_service.py` : auth + jurnal + check status
+- `bot_pyrogram_sample.py` : sample bot `/buy <nominal>`
 
-## Menjalankan
+## Install
 
 ```bash
 cd fastapi_template
@@ -25,31 +27,50 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+```
+
+## 1) Menjalankan FastAPI
+
+```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Endpoint
-
+Endpoint:
 - `GET /health`
 - `POST /gopay/auth/refresh`
 - `POST /gopay/check-status`
 
-Contoh body `POST /gopay/check-status`:
+## 2) Menjalankan sample bot Pyrogram
 
-```json
-{
-  "base_total_amount": 15000,
-  "created_at": 1730809200000,
-  "expiry_at": 1730810100000
-}
+Isi `.env`:
+- `BOT_TOKEN`, `API_ID`, `API_HASH`
+- `QR_STRING` (QRIS statis merchant)
+- `GOBIZ_EMAIL`, `GOBIZ_PASSWORD` (atau token existing)
+
+Lalu run:
+
+```bash
+python bot_pyrogram_sample.py
 ```
 
-Response:
+Perintah bot:
+- `/start`
+- `/buy 15000`
 
-```json
-{
-  "status": "pending",
-  "amount": 15000,
-  "provider_ref": null
-}
-```
+## Flow `/buy 15000`
+
+- Bot cari nominal unik (cek pending lokal + cek jurnal GoBiz)
+- Bot generate QRIS dinamis dari `QR_STRING`
+- Bot kirim gambar QR + caption pending bergaya box
+- Background loop cek status tiap 5 detik
+  - jika ada payment match: edit caption jadi berhasil
+  - jika timeout: edit caption jadi kadaluarsa
+  - jika sisa <=60 detik: kirim warning
+
+## Catatan
+
+- Ini template sample, bukan sistem produksi final.
+- Untuk produksi, sebaiknya:
+  - pindahkan store ke DB (PostgreSQL/Redis)
+  - tambah retry + observability
+  - batasi rate polling dan tambahkan lock/distributed worker
