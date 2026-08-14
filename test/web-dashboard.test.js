@@ -35,7 +35,11 @@ test.after(async () => {
   else await fs.rm(dbPath, { force: true });
 });
 
-test('serves the storefront and public catalog', async () => {
+test('serves the storefront, health check, and public catalog', async () => {
+  const health = await fetch(`${baseUrl}/health`);
+  assert.equal(health.status, 200);
+  assert.equal((await health.json()).status, 'ok');
+
   const page = await fetch(baseUrl);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Dashboard admin/);

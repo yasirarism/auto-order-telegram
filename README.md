@@ -68,6 +68,8 @@ Web UI otomatis aktif tanpa variabel environment tambahan. Setelah aplikasi berj
 
 Bot dan web membaca `products.json`, `transactions.json`, `db.json`, dan folder `stok/` melalui store yang sama (termasuk MongoDB bila dikonfigurasi), jadi tidak ada database web terpisah yang perlu disinkronkan.
 
+Untuk deployment Docker, port container harus dipublikasikan dengan `-p 3000:3000`. Setelah itu web dapat dibuka melalui `http://IP-VPS:3000`; pastikan firewall VPS mengizinkan TCP port 3000, atau arahkan reverse proxy Nginx/Caddy ke `127.0.0.1:3000`. Endpoint pengecekan tersedia di `/health`.
+
 ## Menjalankan secara lokal
 
 ```bash
@@ -92,7 +94,7 @@ docker build -t auto-order-telegram:latest .
 ### Menjalankan container
 
 ```bash
-docker run --env-file .env --name auto-order-telegram --restart unless-stopped -d auto-order-telegram:latest
+docker run --env-file .env -p 3000:3000 --name auto-order-telegram --restart unless-stopped -d auto-order-telegram:latest
 ```
 
 ### Melihat log container
