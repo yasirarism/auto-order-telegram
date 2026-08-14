@@ -6,13 +6,12 @@ const path = require('node:path');
 process.env.BOT_TOKEN = '123456:test-bot-token-for-session-signing';
 process.env.ADMIN_IDS = '2024984460';
 
-const { createDashboardServer } = require('../lib/web-dashboard');
+const { createDashboardServer, approveTelegramLogin } = require('../lib/web-dashboard');
 
 const dbPath = path.resolve('data/db.json');
 let server;
 let baseUrl;
 let previousDb = null;
-let otpMessage = '';
 
 test.before(async () => {
   try { previousDb = await fs.readFile(dbPath); } catch (_) {}
@@ -23,7 +22,7 @@ test.before(async () => {
   }));
 
   server = createDashboardServer({
-    telegram: { sendMessage: async (_userId, message) => { otpMessage = message; return {}; } }
+    telegram: { getMe: async () => ({ username: 'TestAutoOrderBot' }) }
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -50,21 +49,20 @@ test('serves the storefront, health check, and public catalog', async () => {
   assert.ok(Array.isArray(payload.products));
 });
 
-test('protects admin API and recognizes bot admin through Telegram OTP', async () => {
+test('protects admin API and recognizes bot admin through Telegram deep-link', async () => {
   const denied = await fetch(`${baseUrl}/api/admin/overview`);
   assert.equal(denied.status, 401);
 
-  const requestOtp = await fetch(`${baseUrl}/api/auth/telegram/request`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: '2024984460' })
-  });
-  assert.equal(requestOtp.status, 200);
-  const code = otpMessage.match(/\b(\d{6})\b/)[1];
+  const linkResponse = await fetch(`${baseUrl}/api/auth/telegram/link`, { method: 'POST' });
+  assert.equal(linkResponse.status, 201);
+  const challenge = await linkResponse.json();
+  assert.match(challenge.url, /^https:\/\/t\.me\/TestAutoOrderBot\?start=web_/);
 
-  const verify = await fetch(`${baseUrl}/api/auth/telegram/verify`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: '2024984460', code })
-  });
+  assert.equal(approveTelegramLogin(challenge.token, {
+    id: '2024984460', username: 'TestAdmin'
+  }), true);
+
+  const verify = await fetch(`${baseUrl}/api/auth/telegram/status?token=${challenge.token}`);
   assert.equal(verify.status, 200);
   assert.equal((await verify.clone().json()).role, 'admin');
   const cookie = verify.headers.get('set-cookie').split(';')[0];

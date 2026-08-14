@@ -70,7 +70,7 @@
 
   <footer><span>Secure checkout • QRIS</span><span>Data sinkron dengan Telegram</span></footer>
 
-  <dialog id="loginDialog"><button class="dialog-close" data-close>×</button><div id="loginStepId"><p class="eyebrow">LOGIN AMAN</p><h2>Hubungkan Telegram</h2><p>Kami akan mengirim kode OTP melalui bot. Pastikan kamu sudah mengetik <b>/start</b>.</p><form id="requestOtpForm" class="stack"><label>ID Telegram<input id="telegramId" inputmode="numeric" placeholder="Contoh: 2024984460" required></label><button class="primary">Kirim kode OTP</button></form></div><div id="loginStepOtp" class="hidden"><p class="eyebrow">CEK TELEGRAM</p><h2>Masukkan 6 digit</h2><p>Kode berlaku selama 5 menit.</p><form id="verifyOtpForm" class="stack"><input id="otpCode" class="otp" inputmode="numeric" maxlength="6" placeholder="000000" required><button class="primary">Verifikasi & masuk</button></form><button id="backOtp" class="text-btn">Ganti ID Telegram</button></div></dialog>
+  <dialog id="loginDialog"><button class="dialog-close" data-close>×</button><div id="loginContent"><p class="eyebrow">LOGIN AMAN</p><h2>Hubungkan Telegram</h2><p>Klik tombol di bawah untuk membuka bot. Tekan <b>Start</b> di Telegram dan website akan login otomatis.</p><a id="openTelegramLogin" class="primary login-link" href="#" target="_blank" rel="noopener">Menyiapkan link…</a><p class="login-status" id="loginStatus">Tidak perlu mengetik ID atau kode OTP.</p></div></dialog>
 
   <dialog id="checkoutDialog"><button class="dialog-close" data-close>×</button><div id="checkoutBody"></div></dialog>
   <div id="toast" class="toast"></div>

@@ -10,7 +10,7 @@ Bot Telegram untuk kebutuhan auto order. Project ini berjalan di Node.js 22 dan 
 - Mendukung generate aset gambar (via `canvas`).
 - Web storefront responsif untuk katalog dan checkout QRIS.
 - Dashboard admin web untuk stok dan monitoring transaksi.
-- Login pelanggan web melalui OTP Telegram; data produk, stok, dan transaksi memakai penyimpanan yang sama dengan bot.
+- Login pelanggan web melalui deep-link bot Telegram tanpa mengetik ID; data produk, stok, dan transaksi memakai penyimpanan yang sama dengan bot.
 
 ## Prasyarat
 
@@ -62,9 +62,9 @@ Berikut variabel penting yang tersedia di `.env.example`:
 
 Web UI otomatis aktif tanpa variabel environment tambahan. Setelah aplikasi berjalan, buka `http://localhost:3000` (atau domain hosting). Jika hosting menyediakan `PORT`, aplikasi akan menggunakannya secara otomatis.
 
-- **Store** menampilkan katalog dan stok real-time. Pelanggan login menggunakan ID Telegram; kode OTP dikirim oleh bot, lalu checkout menghasilkan QRIS. Setelah pembayaran terdeteksi, akun tetap dikirim melalui Telegram.
+- **Store** menampilkan katalog dan stok real-time. Tombol login membuka bot melalui deep-link; setelah pengguna menekan **Start**, browser login otomatis tanpa memasukkan ID atau kode. Checkout kemudian menghasilkan QRIS dan akun tetap dikirim melalui Telegram.
 - **Pesanan** menampilkan status transaksi web milik pelanggan.
-- **Admin** menggunakan login OTP Telegram yang sama. Dashboard hanya terbuka jika ID Telegram terdaftar pada konfigurasi admin bot (`ADMIN_IDS`/`settings.js`), dan menyediakan ringkasan, tabel stok/transaksi, serta form tambah stok dengan format satu akun per baris: `email|password|catatan`.
+- **Admin** memakai deep-link Telegram yang sama. Dashboard hanya terbuka jika akun Telegram terdaftar pada konfigurasi admin bot (`ADMIN_IDS`/`settings.js`), dan menyediakan ringkasan, tabel stok/transaksi, serta form tambah stok dengan format satu akun per baris: `email|password|catatan`.
 
 Bot dan web membaca `products.json`, `transactions.json`, `db.json`, dan folder `stok/` melalui store yang sama (termasuk MongoDB bila dikonfigurasi), jadi tidak ada database web terpisah yang perlu disinkronkan.
 

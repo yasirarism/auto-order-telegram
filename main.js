@@ -401,7 +401,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Web storefront + dashboard memakai data store yang sama dengan bot, sehingga
 // perubahan stok dan status transaksi langsung terlihat di kedua UI.
-const { startDashboard } = require("./lib/web-dashboard");
+const { startDashboard, approveTelegramLogin } = require("./lib/web-dashboard");
 const webServer = startDashboard(bot);
 
 CornService.register('validate_tx', '*/3 * * * * *', async () => {
@@ -692,6 +692,18 @@ bot.action("broadcast_confirm", async (ctx) => {
 bot.start(async (ctx) => {
   ctx.session = ctx.session || {};
   ctx.session.flashSale = false;
+
+  // Deep-link dari web: /start web_<token>. Identitas diambil langsung dari
+  // Telegram, jadi pengguna tidak perlu mengetik ID atau kode OTP manual.
+  const startPayload = String(ctx.startPayload || "");
+  if (startPayload.startsWith("web_")) {
+    const approved = approveTelegramLogin(startPayload.slice(4), ctx.from);
+    if (approved) {
+      await ctx.reply("✅ Login web berhasil. Kamu boleh kembali ke browser.");
+    } else {
+      await ctx.reply("⚠️ Link login web sudah tidak berlaku. Silakan buat link baru dari website.");
+    }
+  }
   const chatId = String(ctx.chat.id);
   const user = ctx.from;
 
