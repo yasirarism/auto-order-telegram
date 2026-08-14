@@ -41,7 +41,12 @@ test('serves the storefront, health check, and public catalog', async () => {
 
   const page = await fetch(baseUrl);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Dashboard admin/);
+  assert.equal(page.headers.get('cache-control'), 'no-store, max-age=0');
+  assert.match(await page.text(), /app\.js\?v=4/);
+
+  const script = await fetch(`${baseUrl}/app.js?v=4`);
+  assert.equal(script.status, 200);
+  assert.equal(script.headers.get('cache-control'), 'no-store, max-age=0');
 
   const response = await fetch(`${baseUrl}/api/catalog`);
   assert.equal(response.status, 200);
