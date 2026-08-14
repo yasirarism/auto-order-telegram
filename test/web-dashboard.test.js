@@ -42,9 +42,9 @@ test('serves the storefront, health check, and public catalog', async () => {
   const page = await fetch(baseUrl);
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('cache-control'), 'no-store, max-age=0');
-  assert.match(await page.text(), /app\.js\?v=4/);
+  assert.match(await page.text(), /app\.js\?v=5/);
 
-  const script = await fetch(`${baseUrl}/app.js?v=4`);
+  const script = await fetch(`${baseUrl}/app.js?v=5`);
   assert.equal(script.status, 200);
   assert.equal(script.headers.get('cache-control'), 'no-store, max-age=0');
 
@@ -77,6 +77,24 @@ test('protects admin API and recognizes bot admin through Telegram deep-link', a
   const payload = await overview.json();
   assert.equal(typeof payload.stats.stock, 'number');
   assert.ok(Array.isArray(payload.transactions));
+
+  const created = await fetch(`${baseUrl}/api/admin/products`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ code: 'webtest', name: 'Web Test', desc: 'Test', variants: [{ name: 'Basic', price: 1000 }] })
+  });
+  assert.equal(created.status, 201);
+  const product = await created.json();
+
+  const addVariant = await fetch(`${baseUrl}/api/admin/products/${product.id}/variants`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Pro', price: 2000 })
+  });
+  assert.equal(addVariant.status, 201);
+
+  const removed = await fetch(`${baseUrl}/api/admin/products/${product.id}`, {
+    method: 'DELETE', headers: { cookie }
+  });
+  assert.equal(removed.status, 200);
 });
 
 test('rejects checkout without Telegram session', async () => {
