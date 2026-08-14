@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 process.env.BOT_TOKEN = '123456:test-bot-token-for-session-signing';
+process.env.NODE_ENV = 'production';
 process.env.ADMIN_IDS = '2024984460';
 
 const { createDashboardServer, approveTelegramLogin } = require('../lib/web-dashboard');
@@ -42,9 +43,9 @@ test('serves the storefront, health check, and public catalog', async () => {
   const page = await fetch(baseUrl);
   assert.equal(page.status, 200);
   assert.equal(page.headers.get('cache-control'), 'no-store, max-age=0');
-  assert.match(await page.text(), /app\.js\?v=5/);
+  assert.match(await page.text(), /app\.js\?v=6/);
 
-  const script = await fetch(`${baseUrl}/app.js?v=5`);
+  const script = await fetch(`${baseUrl}/app.js?v=6`);
   assert.equal(script.status, 200);
   assert.equal(script.headers.get('cache-control'), 'no-store, max-age=0');
 
@@ -70,7 +71,12 @@ test('protects admin API and recognizes bot admin through Telegram deep-link', a
   const verify = await fetch(`${baseUrl}/api/auth/telegram/status?token=${challenge.token}`);
   assert.equal(verify.status, 200);
   assert.equal((await verify.clone().json()).role, 'admin');
-  const cookie = verify.headers.get('set-cookie').split(';')[0];
+  const setCookie = verify.headers.get('set-cookie');
+  assert.doesNotMatch(setCookie, /; Secure/i, 'HTTP deployment must retain its login cookie');
+  const cookie = setCookie.split(';')[0];
+
+  const adminOrders = await fetch(`${baseUrl}/api/orders`, { headers: { cookie } });
+  assert.equal(adminOrders.status, 200, 'admin session can also checkout as a customer');
 
   const overview = await fetch(`${baseUrl}/api/admin/overview`, { headers: { cookie } });
   assert.equal(overview.status, 200);
@@ -84,6 +90,20 @@ test('protects admin API and recognizes bot admin through Telegram deep-link', a
   });
   assert.equal(created.status, 201);
   const product = await created.json();
+
+  const addStock = await fetch(`${baseUrl}/api/admin/stock`, {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ productId: product.id, variant: 'Basic', stock: 'one@example.com|secret' })
+  });
+  assert.equal(addStock.status, 200);
+  const stockItems = await fetch(`${baseUrl}/api/admin/stock/items?productId=${product.id}&variant=Basic`, { headers: { cookie } });
+  const items = (await stockItems.json()).items;
+  assert.equal(items.length, 1);
+  const deleteItem = await fetch(`${baseUrl}/api/admin/stock/item`, {
+    method: 'DELETE', headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ productId: product.id, variant: 'Basic', key: items[0].key })
+  });
+  assert.equal(deleteItem.status, 200);
 
   const addVariant = await fetch(`${baseUrl}/api/admin/products/${product.id}/variants`, {
     method: 'POST', headers: { cookie, 'content-type': 'application/json' },

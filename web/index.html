@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101512">
   <title>Store Dashboard</title>
-  <link rel="stylesheet" href="/styles.css?v=5">
-  <script src="/app.js?v=5" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=6">
+  <script src="/app.js?v=6" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -80,6 +80,7 @@
             </form>
             <form id="removeStockForm" class="remove-stock"><label>Hapus stok FIFO<input id="removeStockQty" type="number" min="1" placeholder="Jumlah"></label><button class="danger-btn">Kurangi</button></form>
           </div>
+          <div class="panel"><div class="panel-head"><div><p class="eyebrow">STOCK VAULT</p><h3>Hapus stok tertentu</h3></div><button id="loadStockItems" class="icon-btn" title="Muat stok">↻</button></div><p class="panel-copy">Pilih produk dan varian di panel tambah stok, lalu hapus akun tertentu dari daftar.</p><div id="stockItems" class="stock-items"><div class="empty-mini">Klik refresh untuk menampilkan akun.</div></div></div>
           <div class="panel wide"><div class="panel-head"><div><p class="eyebrow">LIVE DATA</p><h3>Stok terkini</h3></div><button id="refreshAdmin" class="icon-btn">↻</button></div><div id="inventoryTable" class="table-wrap"></div></div>
         </div>
         <div class="panel transactions"><div class="panel-head"><div><p class="eyebrow">ACTIVITY</p><h3>Transaksi terbaru</h3></div></div><div id="transactionTable" class="table-wrap"></div></div>

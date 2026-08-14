@@ -64,7 +64,7 @@ Web UI otomatis aktif tanpa variabel environment tambahan. Setelah aplikasi berj
 
 - **Store** menampilkan katalog dan stok real-time. Tombol login membuka bot melalui deep-link; setelah pengguna menekan **Start**, browser login otomatis tanpa memasukkan ID atau kode. Checkout kemudian menghasilkan QRIS dan akun tetap dikirim melalui Telegram.
 - **Pesanan** menampilkan status transaksi web milik pelanggan.
-- **Admin** memakai deep-link Telegram yang sama. Dashboard hanya terbuka jika akun Telegram terdaftar pada konfigurasi admin bot (`ADMIN_IDS`/`settings.js`). Admin dapat membuat, mengedit, dan menghapus produk/varian; mengatur harga; menambah stok dengan format `email|password|catatan`; mengurangi stok secara FIFO; serta memantau inventory dan transaksi.
+- **Admin** memakai deep-link Telegram yang sama. Dashboard hanya terbuka jika akun Telegram terdaftar pada konfigurasi admin bot (`ADMIN_IDS`/`settings.js`). Admin dapat membuat, mengedit, dan menghapus produk/varian; mengatur harga; menambah stok dengan format `email|password|catatan`; mengurangi stok secara FIFO; melihat lalu menghapus akun stok tertentu; serta memantau inventory dan transaksi. Akun admin tetap dapat berbelanja melalui checkout web seperti pengguna biasa.
 
 Bot dan web membaca `products.json`, `transactions.json`, `db.json`, dan folder `stok/` melalui store yang sama (termasuk MongoDB bila dikonfigurasi), jadi tidak ada database web terpisah yang perlu disinkronkan.
 
