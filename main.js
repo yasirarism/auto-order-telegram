@@ -399,6 +399,11 @@ if (!BOT_TOKEN) {
 }
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// Web storefront + dashboard memakai data store yang sama dengan bot, sehingga
+// perubahan stok dan status transaksi langsung terlihat di kedua UI.
+const { startDashboard } = require("./lib/web-dashboard");
+const webServer = startDashboard(bot);
+
 CornService.register('validate_tx', '*/3 * * * * *', async () => {
   await ValidateTransactions(bot)
 
@@ -6973,5 +6978,11 @@ setTimeout(() => {
   console.log(`[${AUTHOR}] ⚡️ Debug: bot.launch() udah dijalankan`);
 }, 1000);
 CornService.start()
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGINT", () => {
+  webServer?.close();
+  bot.stop("SIGINT");
+});
+process.once("SIGTERM", () => {
+  webServer?.close();
+  bot.stop("SIGTERM");
+});

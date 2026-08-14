@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101512">
+  <title>Store Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#"><span class="brand-mark">A</span><span><b id="storeName">Auto Order</b><small>Digital goods, instant delivery</small></span></a>
+    <nav>
+      <button class="nav-btn active" data-view="store">Store</button>
+      <button class="nav-btn" data-view="orders">Pesanan</button>
+      <button class="nav-btn" data-view="admin">Admin</button>
+    </nav>
+    <button id="authButton" class="outline">Masuk via Telegram</button>
+  </header>
+
+  <main>
+    <section id="storeView" class="view">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">AUTO DELIVERY • 24/7</p>
+          <h1>Produk digital.<br><em>Tanpa menunggu.</em></h1>
+          <p class="hero-copy">Pilih produk, bayar dengan QRIS, lalu akun dikirim langsung ke Telegram kamu setelah pembayaran terverifikasi.</p>
+          <button class="primary" data-scroll="catalog">Lihat katalog <span>↓</span></button>
+        </div>
+        <div class="hero-card">
+          <span class="live"><i></i> SYSTEM ONLINE</span>
+          <div class="orb">⚡</div>
+          <div class="metric"><strong id="heroStock">—</strong><span>akun siap dikirim</span></div>
+        </div>
+      </div>
+      <div class="section-head" id="catalog"><div><p class="eyebrow">KATALOG</p><h2>Pilih kebutuhanmu</h2></div><button id="refreshCatalog" class="icon-btn" title="Refresh">↻</button></div>
+      <div id="productGrid" class="product-grid"><div class="loading">Memuat katalog…</div></div>
+    </section>
+
+    <section id="ordersView" class="view hidden">
+      <div class="page-title"><p class="eyebrow">TERHUBUNG KE TELEGRAM</p><h1>Pesanan saya</h1><p>Status di halaman ini sama dengan status pesanan di bot.</p></div>
+      <div id="ordersContent" class="panel empty-state">Masuk via Telegram untuk melihat pesanan web kamu.</div>
+    </section>
+
+    <section id="adminView" class="view hidden">
+      <div class="page-title"><p class="eyebrow">CONTROL ROOM</p><h1>Dashboard admin</h1><p>Kelola stok yang sama persis dengan stok di Telegram.</p></div>
+      <div id="adminLogin" class="panel login-card">
+        <h3>Autentikasi admin</h3><p>Masukkan <code>WEB_ADMIN_TOKEN</code> dari konfigurasi server.</p>
+        <form id="adminLoginForm"><input id="adminToken" type="password" placeholder="Token admin" required><button class="primary">Buka dashboard</button></form>
+      </div>
+      <div id="adminDashboard" class="hidden">
+        <div id="stats" class="stats"></div>
+        <div class="admin-grid">
+          <div class="panel"><div class="panel-head"><div><p class="eyebrow">INVENTORY</p><h3>Tambah stok</h3></div></div>
+            <form id="stockForm" class="stack">
+              <label>Produk<select id="stockProduct" required></select></label>
+              <label>Varian<select id="stockVariant" required></select></label>
+              <label>Data akun<textarea id="stockData" rows="9" placeholder="email@example.com|password|catatan opsional&#10;email2@example.com|password2" required></textarea></label>
+              <small>Satu akun per baris. Duplikat email otomatis dilewati.</small>
+              <button class="primary">+ Tambahkan stok</button>
+            </form>
+          </div>
+          <div class="panel wide"><div class="panel-head"><div><p class="eyebrow">LIVE DATA</p><h3>Stok terkini</h3></div><button id="refreshAdmin" class="icon-btn">↻</button></div><div id="inventoryTable" class="table-wrap"></div></div>
+        </div>
+        <div class="panel transactions"><div class="panel-head"><div><p class="eyebrow">ACTIVITY</p><h3>Transaksi terbaru</h3></div></div><div id="transactionTable" class="table-wrap"></div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>Secure checkout • QRIS</span><span>Data sinkron dengan Telegram</span></footer>
+
+  <dialog id="loginDialog"><button class="dialog-close" data-close>×</button><div id="loginStepId"><p class="eyebrow">LOGIN AMAN</p><h2>Hubungkan Telegram</h2><p>Kami akan mengirim kode OTP melalui bot. Pastikan kamu sudah mengetik <b>/start</b>.</p><form id="requestOtpForm" class="stack"><label>ID Telegram<input id="telegramId" inputmode="numeric" placeholder="Contoh: 2024984460" required></label><button class="primary">Kirim kode OTP</button></form></div><div id="loginStepOtp" class="hidden"><p class="eyebrow">CEK TELEGRAM</p><h2>Masukkan 6 digit</h2><p>Kode berlaku selama 5 menit.</p><form id="verifyOtpForm" class="stack"><input id="otpCode" class="otp" inputmode="numeric" maxlength="6" placeholder="000000" required><button class="primary">Verifikasi & masuk</button></form><button id="backOtp" class="text-btn">Ganti ID Telegram</button></div></dialog>
+
+  <dialog id="checkoutDialog"><button class="dialog-close" data-close>×</button><div id="checkoutBody"></div></dialog>
+  <div id="toast" class="toast"></div>
+</body>
+</html>

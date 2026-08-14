@@ -8,6 +8,9 @@ Bot Telegram untuk kebutuhan auto order. Project ini berjalan di Node.js 22 dan 
 - Konfigurasi via file `.env`.
 - Logging dan scheduler (cron).
 - Mendukung generate aset gambar (via `canvas`).
+- Web storefront responsif untuk katalog dan checkout QRIS.
+- Dashboard admin web untuk stok dan monitoring transaksi.
+- Login pelanggan web melalui OTP Telegram; data produk, stok, dan transaksi memakai penyimpanan yang sama dengan bot.
 
 ## Prasyarat
 
@@ -54,6 +57,20 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `ADMIN_USERNAMES` — daftar username admin (pisahkan dengan koma).
 - `ADMIN_JSON` — JSON array admin (misalnya `[{"id":"123","username":"foo"}]`).
 - `ALLOW_USER_CEK_SNK` — `true/false` untuk akses publik `/ceksnk`.
+- `WEB_ENABLED` — aktif/nonaktifkan web UI (default `true`).
+- `PORT` / `WEB_PORT` — port HTTP dashboard (default `3000`).
+- `WEB_ADMIN_TOKEN` — token rahasia untuk login dashboard admin.
+- `WEB_SESSION_SECRET` — secret acak minimal 32 karakter untuk menandatangani sesi login.
+
+## Web UI
+
+Setelah aplikasi berjalan, buka `http://localhost:3000` (atau domain hosting):
+
+- **Store** menampilkan katalog dan stok real-time. Pelanggan login menggunakan ID Telegram; kode OTP dikirim oleh bot, lalu checkout menghasilkan QRIS. Setelah pembayaran terdeteksi, akun tetap dikirim melalui Telegram.
+- **Pesanan** menampilkan status transaksi web milik pelanggan.
+- **Admin** dibuka menggunakan `WEB_ADMIN_TOKEN`, dan menyediakan ringkasan, tabel stok/transaksi, serta form tambah stok dengan format satu akun per baris: `email|password|catatan`.
+
+Bot dan web membaca `products.json`, `transactions.json`, `db.json`, dan folder `stok/` melalui store yang sama (termasuk MongoDB bila dikonfigurasi), jadi tidak ada database web terpisah yang perlu disinkronkan.
 
 ## Menjalankan secara lokal
 
