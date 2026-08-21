@@ -21,6 +21,7 @@
 const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
 const { sendPaymentAnnouncement, maskUserId } = require("./utils/paymentCard");
+const { CUSTOM_EMOJI, ce, callbackButton } = require("./utils/customEmoji");
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -819,7 +820,7 @@ bot.start(async (ctx) => {
   ]).resize();
 
     const bannerPath = INFO_BANNER_PATH;
-  const caption = `🤖 ${BOT_NAME} — by ${AUTHOR}\n\n${text}`;
+  const caption = `${ce('gift', '🎁')} <b>${esc(BOT_NAME)}</b> — by ${esc(AUTHOR)}\n\n${text}`;
 
   // 🖼️ Kirim banner cuma kalau ada, biar cepat
   if (fs.existsSync(bannerPath)) {
@@ -887,13 +888,13 @@ bot.hears('🧾 List Produk', async (ctx) => {
   const now = nowTZ();
 
   const listText = [
-    `<b>📦 LIST PRODUK</b>`,
+    `<b>${ce('product', '📦')} LIST PRODUK</b>`,
     `<i>page 1 / 1</i>`,
     `━━━━━━━━━━━━━━━━━━━`,
     ...products.map((p) => {
       const badge = getProductFlashSaleBadge(flashSales, p, now);
       const badgeText = badge ? ` — 🔥 ${badge}` : "";
-      return `[${p.id}] ${String(p.name || "-").toUpperCase()}${badgeText}`;
+      return `${ce('product', '📦')} [${p.id}] ${String(p.name || "-").toUpperCase()}${badgeText}`;
     }),
     `━━━━━━━━━━━━━━━━━━━`,
     `This bot is proudly created by\n© ${STORE_NICKNAME} 2025`
@@ -951,7 +952,7 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
   }
 
   const listText = [
-    `<b>🔥 FLASH SALE</b>`,
+    `<b>${ce('fire', '🔥')} FLASH SALE</b>`,
     `━━━━━━━━━━━━━━━━━━━`,
     ...flashSaleProducts.map((p) => {
       const badge = getProductFlashSaleBadge(flashSales, p, now);
