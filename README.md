@@ -8,6 +8,9 @@ Bot Telegram untuk kebutuhan auto order. Project ini berjalan di Node.js 22 dan 
 - Konfigurasi via file `.env`.
 - Logging dan scheduler (cron).
 - Mendukung generate aset gambar (via `canvas`).
+- Web storefront responsif untuk katalog dan checkout QRIS.
+- Dashboard admin web untuk stok dan monitoring transaksi.
+- Login pelanggan web melalui deep-link bot Telegram tanpa mengetik ID; data produk, stok, dan transaksi memakai penyimpanan yang sama dengan bot.
 
 ## Prasyarat
 
@@ -55,6 +58,18 @@ Berikut variabel penting yang tersedia di `.env.example`:
 - `ADMIN_JSON` — JSON array admin (misalnya `[{"id":"123","username":"foo"}]`).
 - `ALLOW_USER_CEK_SNK` — `true/false` untuk akses publik `/ceksnk`.
 
+## Web UI
+
+Web UI otomatis aktif tanpa variabel environment tambahan. Setelah aplikasi berjalan, buka `http://localhost:3000` (atau domain hosting). Jika hosting menyediakan `PORT`, aplikasi akan menggunakannya secara otomatis.
+
+- **Store** menampilkan katalog dan stok real-time. Tombol login membuka bot melalui deep-link; setelah pengguna menekan **Start**, browser login otomatis tanpa memasukkan ID atau kode. Checkout kemudian menghasilkan QRIS dan akun tetap dikirim melalui Telegram.
+- **Pesanan** menampilkan status transaksi web milik pelanggan.
+- **Admin** memakai deep-link Telegram yang sama. Dashboard hanya terbuka jika akun Telegram terdaftar pada konfigurasi admin bot (`ADMIN_IDS`/`settings.js`). Admin dapat membuat, mengedit, dan menghapus produk/varian; mengatur harga; menambah stok dengan format `email|password|catatan`; mengurangi stok secara FIFO; melihat lalu menghapus akun stok tertentu; serta memantau inventory dan transaksi. Akun admin tetap dapat berbelanja melalui checkout web seperti pengguna biasa.
+
+Bot dan web membaca `products.json`, `transactions.json`, `db.json`, dan folder `stok/` melalui store yang sama (termasuk MongoDB bila dikonfigurasi), jadi tidak ada database web terpisah yang perlu disinkronkan.
+
+Untuk deployment Docker, port container harus dipublikasikan dengan `-p 3000:3000`. Setelah itu web dapat dibuka melalui `http://IP-VPS:3000`; pastikan firewall VPS mengizinkan TCP port 3000, atau arahkan reverse proxy Nginx/Caddy ke `127.0.0.1:3000`. Endpoint pengecekan tersedia di `/health`.
+
 ## Menjalankan secara lokal
 
 ```bash
@@ -79,7 +94,7 @@ docker build -t auto-order-telegram:latest .
 ### Menjalankan container
 
 ```bash
-docker run --env-file .env --name auto-order-telegram --restart unless-stopped -d auto-order-telegram:latest
+docker run --env-file .env -p 3000:3000 --name auto-order-telegram --restart unless-stopped -d auto-order-telegram:latest
 ```
 
 ### Melihat log container

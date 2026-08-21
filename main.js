@@ -21,6 +21,8 @@
 const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
 const { sendPaymentAnnouncement, maskUserId } = require("./utils/paymentCard");
+const { CUSTOM_EMOJI, ce, callbackButton } = require("./utils/customEmoji");
+const CE = (name, fallback) => ce(name, fallback);
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -399,6 +401,11 @@ if (!BOT_TOKEN) {
 }
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// Web storefront + dashboard memakai data store yang sama dengan bot, sehingga
+// perubahan stok dan status transaksi langsung terlihat di kedua UI.
+const { startDashboard, approveTelegramLogin } = require("./lib/web-dashboard");
+const webServer = startDashboard(bot);
+
 CornService.register('validate_tx', '*/3 * * * * *', async () => {
   await ValidateTransactions(bot)
 
@@ -687,6 +694,18 @@ bot.action("broadcast_confirm", async (ctx) => {
 bot.start(async (ctx) => {
   ctx.session = ctx.session || {};
   ctx.session.flashSale = false;
+
+  // Deep-link dari web: /start web_<token>. Identitas diambil langsung dari
+  // Telegram, jadi pengguna tidak perlu mengetik ID atau kode OTP manual.
+  const startPayload = String(ctx.startPayload || "");
+  if (startPayload.startsWith("web_")) {
+    const approved = approveTelegramLogin(startPayload.slice(4), ctx.from);
+    if (approved) {
+      await ctx.reply("✅ Login web berhasil. Kamu boleh kembali ke browser.");
+    } else {
+      await ctx.reply("⚠️ Link login web sudah tidak berlaku. Silakan buat link baru dari website.");
+    }
+  }
   const chatId = String(ctx.chat.id);
   const user = ctx.from;
 
@@ -802,7 +821,7 @@ bot.start(async (ctx) => {
   ]).resize();
 
     const bannerPath = INFO_BANNER_PATH;
-  const caption = `🤖 ${BOT_NAME} — by ${AUTHOR}\n\n${text}`;
+  const caption = `${ce('gift', '🎁')} <b>${esc(BOT_NAME)}</b> — by ${esc(AUTHOR)}\n\n${text}`;
 
   // 🖼️ Kirim banner cuma kalau ada, biar cepat
   if (fs.existsSync(bannerPath)) {
@@ -870,13 +889,13 @@ bot.hears('🧾 List Produk', async (ctx) => {
   const now = nowTZ();
 
   const listText = [
-    `<b>📦 LIST PRODUK</b>`,
+    `<b>${ce('product', '📦')} LIST PRODUK</b>`,
     `<i>page 1 / 1</i>`,
     `━━━━━━━━━━━━━━━━━━━`,
     ...products.map((p) => {
       const badge = getProductFlashSaleBadge(flashSales, p, now);
       const badgeText = badge ? ` — 🔥 ${badge}` : "";
-      return `[${p.id}] ${String(p.name || "-").toUpperCase()}${badgeText}`;
+      return `${ce('product', '📦')} [${p.id}] ${String(p.name || "-").toUpperCase()}${badgeText}`;
     }),
     `━━━━━━━━━━━━━━━━━━━`,
     `This bot is proudly created by\n© ${STORE_NICKNAME} 2025`
@@ -934,7 +953,7 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
   }
 
   const listText = [
-    `<b>🔥 FLASH SALE</b>`,
+    `<b>${ce('fire', '🔥')} FLASH SALE</b>`,
     `━━━━━━━━━━━━━━━━━━━`,
     ...flashSaleProducts.map((p) => {
       const badge = getProductFlashSaleBadge(flashSales, p, now);
@@ -989,7 +1008,7 @@ bot.hears(/^💰 Saldo/, async (ctx) => {
     ].join("\n");
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("📥 Isi Saldo / Topup", "saldo_topup")],
+      [callbackButton(Markup, "Isi Saldo / Topup", "saldo_topup", "money")],
     ]);
 
     await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
@@ -4084,8 +4103,8 @@ bot.use(async (ctx, next) => {
     // Tombol konfirmasi
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("✅ Kirim Broadcast", "broadcast_confirm"),
-        Markup.button.callback("❌ Batal", "broadcast_cancel"),
+        callbackButton(Markup, "Kirim Broadcast", "broadcast_confirm", "success"),
+        callbackButton(Markup, "Batal", "broadcast_cancel", "cancel"),
       ],
     ]);
 
@@ -5845,14 +5864,14 @@ bot.command("helpadmin", async (ctx) => {
 
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("📦 Produk", "help_produk"),
-        Markup.button.callback("📥 Stok", "help_stok")
+        callbackButton(Markup, "Produk", "help_produk", "product"),
+        callbackButton(Markup, "Stok", "help_stok", "product")
       ],
       [
-        Markup.button.callback("🧾 Transaksi", "help_trx"),
-        Markup.button.callback("⚙️ Sistem", "help_sys")
+        callbackButton(Markup, "Transaksi", "help_trx", "order"),
+        callbackButton(Markup, "Sistem", "help_sys", "settings")
       ],
-      [Markup.button.callback("➕ Add Stock", "help_addstok")]
+      [callbackButton(Markup, "Add Stock", "help_addstok", "upload")]
     ]);
 
     await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
@@ -5912,9 +5931,9 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
       ].join("\n");
     }
 
-    const keyboardRows = [[Markup.button.callback("⬅️ Kembali", "help_back")]];
+    const keyboardRows = [[callbackButton(Markup, "Kembali", "help_back", "back")]];
     if (category === "stok") {
-      keyboardRows.unshift([Markup.button.callback("➕ Menu Add Stock", "help_addstok")]);
+      keyboardRows.unshift([callbackButton(Markup, "Menu Add Stock", "help_addstok", "upload")]);
     }
     const keyboard = Markup.inlineKeyboard(keyboardRows);
 
@@ -5957,7 +5976,7 @@ bot.action("help_addstok", async (ctx) => {
     ].join("\n");
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("⬅️ Kembali ke Stok", "help_stok")]
+      [callbackButton(Markup, "Kembali ke Stok", "help_stok", "back")]
     ]);
 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
@@ -5979,9 +5998,9 @@ bot.action("help_back", async (ctx) => {
     ].join("\n");
     
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("📦 Produk", "help_produk"), Markup.button.callback("📥 Stok", "help_stok")],
-      [Markup.button.callback("🧾 Transaksi", "help_trx"), Markup.button.callback("⚙️ Sistem", "help_sys")],
-      [Markup.button.callback("➕ Add Stock", "help_addstok")]
+      [callbackButton(Markup, "Produk", "help_produk", "product"), callbackButton(Markup, "Stok", "help_stok", "product")],
+      [callbackButton(Markup, "Transaksi", "help_trx", "order"), callbackButton(Markup, "Sistem", "help_sys", "settings")],
+      [callbackButton(Markup, "Add Stock", "help_addstok", "upload")]
     ]);
 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
@@ -6463,8 +6482,8 @@ bot.command("broadcast", async (ctx) => {
 
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("✅ Kirim Broadcast", "broadcast_confirm"),
-        Markup.button.callback("❌ Batal", "broadcast_cancel"),
+        callbackButton(Markup, "Kirim Broadcast", "broadcast_confirm", "success"),
+        callbackButton(Markup, "Batal", "broadcast_cancel", "cancel"),
       ],
     ]);
 
@@ -6973,5 +6992,11 @@ setTimeout(() => {
   console.log(`[${AUTHOR}] ⚡️ Debug: bot.launch() udah dijalankan`);
 }, 1000);
 CornService.start()
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGINT", () => {
+  webServer?.close();
+  bot.stop("SIGINT");
+});
+process.once("SIGTERM", () => {
+  webServer?.close();
+  bot.stop("SIGTERM");
+});
