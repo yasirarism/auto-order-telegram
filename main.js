@@ -815,8 +815,8 @@ bot.start(async (ctx) => {
 
   // 🎛️ Keyboard utama
   const keyboard = Markup.keyboard([
-    [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
-    [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
+    ['🧾 List Produk', '🔥 Flash Sale'],
+    ['🛒 Stock', saldoLabel(me.balance)],
     ['📜 Riwayat Transaksi', '❓ Cara Order']
   ]).resize();
 
@@ -910,8 +910,8 @@ for (let i = 0; i < productButtons.length; i += 6) {
 
 // 🎛️ Keyboard utama
 const keyboard = Markup.keyboard([
-  [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
-  [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
+  ['🧾 List Produk', '🔥 Flash Sale'],
+  ['🛒 Stock', saldoLabel(me.balance)],
   ...rows,
   ['📜 Riwayat Transaksi']
 ]).resize();
@@ -971,8 +971,8 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
   }
 
   const keyboard = Markup.keyboard([
-    [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
-    [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
+    ['🧾 List Produk', '🔥 Flash Sale'],
+    ['🛒 Stock', saldoLabel(me.balance)],
     ...rows,
     ['📜 Riwayat Transaksi']
   ]).resize();
