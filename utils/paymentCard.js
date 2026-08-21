@@ -3,6 +3,7 @@ require("dotenv").config({ override: true });
 const { createCanvas, registerFont } = require("canvas");
 const dayjs = require("dayjs");
 const path = require("path");
+const { ce } = require("./customEmoji");
 
 // Setup timezone Day.js
 const utc = require("dayjs/plugin/utc");
@@ -178,7 +179,7 @@ function buildPaymentText({
   const tahun = dj.format("YYYY");
   const qtyVal = Math.max(1, Number(jumlah ?? qty ?? 1));
 
-  const header = `© ${storeName} ${tahun}\n[ PAYMENT MONITORING ]`;
+  const header = `© ${storeName} ${tahun}\n${ce('payment', '💳')} PAYMENT MONITORING`;
   const body = [
     `- Tanggal      : ${tgl}`,
     `- Waktu        : ${jam}`,

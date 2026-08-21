@@ -22,6 +22,7 @@ const { buildFramedQris } = require("./utils/qrisFrame");
 const { isQrisFrameOn } = require("./lib/config");
 const { sendPaymentAnnouncement, maskUserId } = require("./utils/paymentCard");
 const { CUSTOM_EMOJI, ce, callbackButton } = require("./utils/customEmoji");
+const CE = (name, fallback) => ce(name, fallback);
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -814,8 +815,8 @@ bot.start(async (ctx) => {
 
   // 🎛️ Keyboard utama
   const keyboard = Markup.keyboard([
-    ['🧾 List Produk', '🔥 Flash Sale'],
-    ['🛒 Stock', saldoLabel(me.balance)],
+    [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
+    [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
     ['📜 Riwayat Transaksi', '❓ Cara Order']
   ]).resize();
 
@@ -909,8 +910,8 @@ for (let i = 0; i < productButtons.length; i += 6) {
 
 // 🎛️ Keyboard utama
 const keyboard = Markup.keyboard([
-  ['🧾 List Produk', '🔥 Flash Sale'],
-  ['🛒 Stock', saldoLabel(me.balance)],
+  [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
+  [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
   ...rows,
   ['📜 Riwayat Transaksi']
 ]).resize();
@@ -970,8 +971,8 @@ bot.hears('🔥 Flash Sale', async (ctx) => {
   }
 
   const keyboard = Markup.keyboard([
-    ['🧾 List Produk', '🔥 Flash Sale'],
-    ['🛒 Stock', saldoLabel(me.balance)],
+    [CE('product', '🧾') + ' List Produk', CE('fire', '🔥') + ' Flash Sale'],
+    [CE('product', '🛒') + ' Stock', saldoLabel(me.balance)],
     ...rows,
     ['📜 Riwayat Transaksi']
   ]).resize();
@@ -1007,7 +1008,7 @@ bot.hears(/^💰 Saldo/, async (ctx) => {
     ].join("\n");
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("📥 Isi Saldo / Topup", "saldo_topup")],
+      [callbackButton(Markup, "Isi Saldo / Topup", "saldo_topup", "money")],
     ]);
 
     await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
@@ -4102,8 +4103,8 @@ bot.use(async (ctx, next) => {
     // Tombol konfirmasi
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("✅ Kirim Broadcast", "broadcast_confirm"),
-        Markup.button.callback("❌ Batal", "broadcast_cancel"),
+        callbackButton(Markup, "Kirim Broadcast", "broadcast_confirm", "success"),
+        callbackButton(Markup, "Batal", "broadcast_cancel", "cancel"),
       ],
     ]);
 
@@ -5863,14 +5864,14 @@ bot.command("helpadmin", async (ctx) => {
 
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("📦 Produk", "help_produk"),
-        Markup.button.callback("📥 Stok", "help_stok")
+        callbackButton(Markup, "Produk", "help_produk", "product"),
+        callbackButton(Markup, "Stok", "help_stok", "product")
       ],
       [
-        Markup.button.callback("🧾 Transaksi", "help_trx"),
-        Markup.button.callback("⚙️ Sistem", "help_sys")
+        callbackButton(Markup, "Transaksi", "help_trx", "order"),
+        callbackButton(Markup, "Sistem", "help_sys", "settings")
       ],
-      [Markup.button.callback("➕ Add Stock", "help_addstok")]
+      [callbackButton(Markup, "Add Stock", "help_addstok", "upload")]
     ]);
 
     await ctx.reply(text, { parse_mode: "HTML", ...keyboard });
@@ -5930,9 +5931,9 @@ bot.action(/help_(produk|stok|trx|sys)/, async (ctx) => {
       ].join("\n");
     }
 
-    const keyboardRows = [[Markup.button.callback("⬅️ Kembali", "help_back")]];
+    const keyboardRows = [[callbackButton(Markup, "Kembali", "help_back", "back")]];
     if (category === "stok") {
-      keyboardRows.unshift([Markup.button.callback("➕ Menu Add Stock", "help_addstok")]);
+      keyboardRows.unshift([callbackButton(Markup, "Menu Add Stock", "help_addstok", "upload")]);
     }
     const keyboard = Markup.inlineKeyboard(keyboardRows);
 
@@ -5975,7 +5976,7 @@ bot.action("help_addstok", async (ctx) => {
     ].join("\n");
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("⬅️ Kembali ke Stok", "help_stok")]
+      [callbackButton(Markup, "Kembali ke Stok", "help_stok", "back")]
     ]);
 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
@@ -5997,9 +5998,9 @@ bot.action("help_back", async (ctx) => {
     ].join("\n");
     
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback("📦 Produk", "help_produk"), Markup.button.callback("📥 Stok", "help_stok")],
-      [Markup.button.callback("🧾 Transaksi", "help_trx"), Markup.button.callback("⚙️ Sistem", "help_sys")],
-      [Markup.button.callback("➕ Add Stock", "help_addstok")]
+      [callbackButton(Markup, "Produk", "help_produk", "product"), callbackButton(Markup, "Stok", "help_stok", "product")],
+      [callbackButton(Markup, "Transaksi", "help_trx", "order"), callbackButton(Markup, "Sistem", "help_sys", "settings")],
+      [callbackButton(Markup, "Add Stock", "help_addstok", "upload")]
     ]);
 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...keyboard });
@@ -6481,8 +6482,8 @@ bot.command("broadcast", async (ctx) => {
 
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback("✅ Kirim Broadcast", "broadcast_confirm"),
-        Markup.button.callback("❌ Batal", "broadcast_cancel"),
+        callbackButton(Markup, "Kirim Broadcast", "broadcast_confirm", "success"),
+        callbackButton(Markup, "Batal", "broadcast_cancel", "cancel"),
       ],
     ]);
 

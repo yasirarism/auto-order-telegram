@@ -29,7 +29,7 @@ const CUSTOM_EMOJI = Object.freeze({
 function ce(name, fallback = "") {
   const id = CUSTOM_EMOJI[name];
   if (!id) return fallback;
-  return `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
+  return `<emoji id="${id}">${fallback}</emoji>`
 }
 
 // Inline buttons support an icon independently from the label text.
@@ -46,4 +46,4 @@ module.exports = { CUSTOM_EMOJI, ce, callbackButton };
 
 // Exported for a small deterministic unit test without Telegram credentials.
 module.exports._isCustomEmojiHtml = (value) =>
-  typeof value === "string" && /<tg-emoji emoji-id="\d+">/.test(value);
+  typeof value === "string" && /<emoji id="\d+">/.test(value);
