@@ -117,7 +117,31 @@ test('protects admin API and recognizes bot admin through Telegram deep-link', a
   assert.equal(removed.status, 200);
 });
 
-test('rejects checkout without Telegram session', async () => {
+test('supports web registration and login without Telegram', async () => {
+  const email = `web-${Date.now()}@example.com`;
+  const register = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: 'correct-horse-battery', firstName: 'Web User' })
+  });
+  assert.equal(register.status, 201);
+  const registerPayload = await register.json();
+  assert.equal(registerPayload.user.email, email);
+  const cookie = register.headers.get('set-cookie').split(';')[0];
+  const orders = await fetch(`${baseUrl}/api/orders`, { headers: { cookie } });
+  assert.equal(orders.status, 200);
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: 'correct-horse-battery' })
+  });
+  assert.equal(login.status, 200);
+  const wrong = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: 'wrong-password' })
+  });
+  assert.equal(wrong.status, 401);
+});
+
+test('rejects checkout without any web or Telegram session', async () => {
   const response = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ productId: 1, variant: 'Test', qty: 1 })

@@ -16,7 +16,7 @@
       <button class="nav-btn" data-view="orders">Pesanan</button>
       <button class="nav-btn" data-view="admin">Admin</button>
     </nav>
-    <button id="authButton" class="outline">Masuk via Telegram</button>
+    <button id="authButton" class="outline">Masuk / Daftar</button>
   </header>
 
   <main>
@@ -25,8 +25,8 @@
         <div>
           <p class="eyebrow">AUTO DELIVERY • 24/7</p>
           <h1>Produk digital.<br><em>Tanpa menunggu.</em></h1>
-          <p class="hero-copy">Pilih produk, bayar dengan QRIS, lalu akun dikirim langsung ke Telegram kamu setelah pembayaran terverifikasi.</p>
-          <button class="primary" data-scroll="catalog">Lihat katalog <span>↓</span></button>
+          <p class="hero-copy">Pilih produk, bayar dengan QRIS, lalu pesanan digital dikirim otomatis setelah pembayaran terverifikasi. Tidak wajib memakai Telegram.</p>
+          <div class="hero-actions"><button class="primary" data-scroll="catalog">Lihat katalog <span>↓</span></button><button class="ghost" data-view-action="orders">Lacak pesanan</button></div>
         </div>
         <div class="hero-card">
           <span class="live"><i></i> SYSTEM ONLINE</span>
@@ -39,14 +39,14 @@
     </section>
 
     <section id="ordersView" class="view hidden">
-      <div class="page-title"><p class="eyebrow">TERHUBUNG KE TELEGRAM</p><h1>Pesanan saya</h1><p>Status di halaman ini sama dengan status pesanan di bot.</p></div>
-      <div id="ordersContent" class="panel empty-state">Masuk via Telegram untuk melihat pesanan web kamu.</div>
+      <div class="page-title"><p class="eyebrow">ORDER CENTER</p><h1>Pesanan saya</h1><p>Lacak pembayaran, status fulfilment, dan akses produk digitalmu.</p></div>
+      <div id="ordersContent" class="panel empty-state">Masuk untuk melihat pesanan web kamu.</div>
     </section>
 
     <section id="adminView" class="view hidden">
       <div class="page-title"><p class="eyebrow">CONTROL ROOM</p><h1>Dashboard admin</h1><p>Kelola stok yang sama persis dengan stok di Telegram.</p></div>
       <div id="adminLogin" class="panel login-card">
-        <h3>Autentikasi admin</h3><p>Masuk menggunakan akun Telegram yang terdaftar sebagai admin bot. Tidak perlu token atau konfigurasi web tambahan.</p>
+        <h3>Autentikasi admin</h3><p>Akun admin tetap mengikuti konfigurasi admin bot Telegram yang sudah ada.</p>
         <button id="adminTelegramLogin" class="primary">Masuk via Telegram</button>
       </div>
       <div id="adminDashboard" class="hidden">
@@ -90,7 +90,7 @@
 
   <footer><span>Secure checkout • QRIS</span><span>Data sinkron dengan Telegram</span></footer>
 
-  <dialog id="loginDialog"><button class="dialog-close" data-close>×</button><div id="loginContent"><p class="eyebrow">LOGIN AMAN</p><h2>Hubungkan Telegram</h2><p>Klik tombol di bawah untuk membuka bot. Tekan <b>Start</b> di Telegram dan website akan login otomatis.</p><a id="openTelegramLogin" class="primary login-link" href="#" target="_blank" rel="noopener">Menyiapkan link…</a><p class="login-status" id="loginStatus">Tidak perlu mengetik ID atau kode OTP.</p></div></dialog>
+  <dialog id="loginDialog"><button class="dialog-close" data-close>×</button><div id="loginContent"><p class="eyebrow">ACCOUNT CENTER</p><h2 id="authTitle">Masuk ke akun</h2><p id="authSubtitle">Gunakan email untuk checkout dan menyimpan riwayat pesanan.</p><div class="auth-tabs"><button class="auth-tab active" data-auth-mode="login">Masuk</button><button class="auth-tab" data-auth-mode="register">Daftar</button></div><form id="authForm" class="stack"><label id="firstNameField" class="hidden">Nama<input id="authFirstName" autocomplete="name"></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" minlength="8" autocomplete="current-password" required></label><button class="primary" id="authSubmit">Masuk</button></form><div class="auth-divider"><span>atau</span></div><button id="telegramLoginSecondary" class="outline">Lanjutkan dengan Telegram</button><p class="login-status" id="loginStatus">Akun web tidak wajib terhubung ke bot.</p><a id="openTelegramLogin" class="hidden" href="#" target="_blank" rel="noopener">Buka Telegram</a></div></dialog>
 
   <dialog id="checkoutDialog"><button class="dialog-close" data-close>×</button><div id="checkoutBody"></div></dialog>
   <div id="toast" class="toast"></div>
